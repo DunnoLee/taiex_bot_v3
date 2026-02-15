@@ -1,39 +1,40 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 
 class EventType(Enum):
-    """定義系統內的事件類型"""
     TICK = "TICK"
-    BAR = "BAR"           # K線完成事件
-    SIGNAL = "SIGNAL"     # 策略發出的買賣訊號
-    ORDER = "ORDER"       # 執行層發出的委託單
-    FILL = "FILL"         # 成交回報
-    ERROR = "ERROR"       # 錯誤訊息
+    BAR = "BAR"
+    SIGNAL = "SIGNAL"
+    ORDER = "ORDER"
+    FILL = "FILL"
+    ERROR = "ERROR"
 
 @dataclass
 class Event:
-    """所有事件的基礎類別"""
     type: EventType
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        if self.timestamp is None:
-            self.timestamp = datetime.now()
+    timestamp: datetime = field(default_factory=datetime.now)
 
 @dataclass
 class TickEvent(Event):
-    """即時報價事件"""
+    """
+    統一的 Tick 格式。
+    來源可能是: Shioaji Realtime Quote 或 Historical CSV playback
+    """
     type: EventType = EventType.TICK
     symbol: str = ""
     price: float = 0.0
     volume: int = 0
-    bid_price: float = 0.0
-    ask_price: float = 0.0
+    bid_price: float = 0.0  # 委買價 (用於模擬成交)
+    ask_price: float = 0.0  # 委賣價
+    simulated: bool = False # 標記是否為模擬數據
 
 @dataclass
 class BarEvent(Event):
-    """K線 (1分K/5分K) 事件"""
+    """
+    統一的 K 線格式 (1分K/5分K)。
+    """
     type: EventType = EventType.BAR
     symbol: str = ""
     period: str = "1m"
@@ -42,17 +43,20 @@ class BarEvent(Event):
     low: float = 0.0
     close: float = 0.0
     volume: int = 0
+    interval: str = "1m" # 1m, 5m, 15m...
+
+# --- 下面是這次新增的 ---
 
 class SignalType(Enum):
-    LONG = "LONG"     # 做多
-    SHORT = "SHORT"   # 做空
-    FLATTEN = "FLATTEN" # 平倉 / 空手
+    LONG = "LONG"
+    SHORT = "SHORT"
+    FLATTEN = "FLATTEN"
 
 @dataclass
 class SignalEvent(Event):
-    """策略計算後發出的訊號"""
+    """策略發出的訊號"""
     type: EventType = EventType.SIGNAL
     symbol: str = ""
     signal_type: SignalType = SignalType.FLATTEN
-    strength: float = 1.0  # 訊號強度 (預留給未來資金管理用)
-    reason: str = ""       # 訊號理由 (例如: "MA Cross Up")
+    strength: float = 1.0
+    reason: str = ""
