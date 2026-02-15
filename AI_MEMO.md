@@ -1,48 +1,47 @@
 # TaiEx Bot V3 - Project Manifesto & AI Memory
 
-> **System Identity:** TaiEx Bot V3 (Python 3.10+ / Mac Silicon)
+> **System Identity:** TaiEx Bot V3 (Python 3.12 / Mac Silicon)
 > **Target:** TMF (Micro Taiwan Index Futures)
-> **Architecture:** Event-Driven (DataFeeder -> Strategy -> Execution)
+> **Architecture:** Event-Driven (Feeder -> Aggregator -> Strategy -> Execution)
 
 ## 1. 核心哲學 (Core Philosophy)
-1.  **Strict Modularity:** - `Strategy` 絕對不可包含 `shioaji` API 代碼。
-    - `Execution` 負責處理 API、滑價與重連，策略不需關心。
-    - `Commander` (Telegram) 只發送控制訊號，不修改策略變數。
-2.  **Simulation Parity:** - `Mock Replay` (回測/模擬) 必須使用與 `Live` (實盤) 完全相同的 `DataFeeder` 介面。
-    - 系統應無法區分當前是「週六的回測」還是「週三的實盤」。
+1.  **Strict Modularity:**
+    - `Strategy` (Brain) is pure logic. It consumes `BarEvent` and produces `SignalEvent`.
+    - `ShioajiFeeder` (Live) and `CsvHistoryFeeder` (Mock) must be interchangeable.
+2.  **Simulation Parity:**
+    - The `BarAggregator` translates real-time Ticks into Bars, ensuring the Strategy sees the same data structure in Live mode as it does in Backtest mode.
 3.  **Config Centralization:**
-    - 所有參數 (MA 週期、止損點數、商品代碼) 必須在 `config/settings.py` 定義，禁止 Hard-code。
+    - All params in `config/settings.py`. No hard-coding.
 
-## 2. 系統架構 (Architecture)
-* **DataFeeder:** 統一數據源接口 (Live: Shioaji / Backtest: CSV)。
-* **Event Engine:** 系統骨幹，傳遞 `TickEvent`, `BarEvent`, `SignalEvent`。
-* **Strategy:** 純邏輯計算 (Input: Bar -> Output: Signal)。
-* **Execution:** 下單執行與倉位同步。
+## 2. 系統架構 (System Architecture)
+* **DataFeeder:**
+    * `CsvHistoryFeeder`: Reads historical CSV (Time/Open/High/Low/Close/Volume) for backtesting.
+    * `ShioajiFeeder`: Connects to API, auto-selects Front Month contract (e.g., TMFB6), streams Ticks.
+* **Translator:**
+    * `BarAggregator`: Accumulates Ticks -> Generates 1-min `BarEvent`.
+* **Strategy:**
+    * `MAStrategy`: Dual MA Cross (Fast/Slow). Pure logic, API-agnostic.
+* **Execution:**
+    * `MockExecutor`: Calculates PnL instantly for backtesting.
+    * `RealExecutor`: (Pending Implementation) Handles Shioaji orders.
 
-## 3. 開發進度 (Development Log)
-- [x] **Phase 0:** Project Initialization & Clean Slate.
-- [ ] **Phase 1: Skeleton & Data Flow**
-    - [ ] Create `config/settings.py`
-    - [ ] Define Event classes in `core/event.py`
-    - [ ] Implement basic `DataFeeder` interface
-- [ ] **Phase 2: Strategy Porting** (Pure logic, no API)
-- [ ] **Phase 3: Mock Replay Environment**
-- [ ] **Phase 4: Live Connection (Shioaji)**
+## 3. 開發日誌 (Development Log)
+- [x] **Phase 0:** Environment Setup (Python 3.12, .venv, settings.py).
+- [x] **Phase 1: Skeleton & Data Flow:** Defined `Event` classes (Tick, Bar, Signal).
+- [x] **Phase 2: Strategy Porting:** Implemented `MAStrategy` (TaLib-free).
+- [x] **Phase 3: Mock Replay:** Validated strategy with `CsvHistoryFeeder` & `MockExecutor` (Found -370k loss in range market).
+- [x] **Phase 4: Live Data Connection:**
+    - Implemented `ShioajiFeeder` with robust contract lookup.
+    - Implemented `BarAggregator` to bridge Tick -> Strategy.
+    - Verified `main_live.py` connection to TMF.
+- [ ] **Phase 5: Remote Control (Commander):** Telegram integration.
+- [ ] **Phase 6: Live Execution:** Real order placement logic.
 
-## 3.5 開發環境規範 (Environment Specs)
-* **Python Version:** 3.12 (Strictly enforced to avoid Shioaji/Pydantic conflicts)
-* **OS:** macOS (Apple Silicon M-series optimized)
-* **Virtual Env:** `.venv` in project root
-* **Key Dependencies:**
-    - `shioaji`: API interaction
-    - `pandas`: Data manipulation
-    - `python-dotenv`: Environment variable management
-    - `matplotlib` / `mplfinance`: Visualization (Planned)
-    
 ## 4. 當前狀態 (Current Context)
-* **Last Updated:** 2026-02-15
-* **Focus:** Building the skeleton (`config` and `event` classes).
-* **User Constraints:** VS Code, Mac, Git Flow.
+* **Last Updated:** 2026-02-16
+* **Status:** System is "Live-Ready" for monitoring. Data pipeline is complete.
+* **Next Priority:** Telegram Integration (`Commander`) to allow mobile monitoring of "System Ready" status.
+* **Note:** `main.py` is for Mock Replay; `main_live.py` is for Real Trading.
 
 ---
 *此檔案由 AI 維護，作為長期記憶與架構守門員。每次重大更新請同步修改此檔。*
