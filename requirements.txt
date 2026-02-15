@@ -1,0 +1,15 @@
+# Core API
+shioaji>=1.2.2
+
+# Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Environment Management
+python-dotenv
+
+# Networking / Async (Shioaji dependencies usually handle this, but good to be explicit)
+requests
+
+# Visualization (Mock Replay 驗證用)
+matplotlib
