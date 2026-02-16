@@ -34,5 +34,5 @@ class BaseStrategy(ABC):
 
     def set_position(self, pos: int):
         """外部 (Commander) 強制修正策略倉位"""
-        print(f"🔄 [Strategy] 倉位修正: {self.position} -> {pos}")
+        #print(f"🔄 [Strategy] 倉位修正: {self.position} -> {pos}")
         self.position = pos

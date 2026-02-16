@@ -30,6 +30,7 @@ def main():
         
         # B. 執行交易
         if signal:
+            
             # 呼叫執行器，並傳入當前價格 (模擬成交用)
             result_msg = executor.execute_signal(signal, event.close)
             

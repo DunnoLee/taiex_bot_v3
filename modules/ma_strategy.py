@@ -2,78 +2,120 @@ import pandas as pd
 import numpy as np
 from collections import deque
 from core.strategy import BaseStrategy
-from core.event import BarEvent, TickEvent, SignalEvent, SignalType
+from core.event import BarEvent, TickEvent, SignalEvent, SignalType, EventType
 from config.settings import Settings
 
 class MAStrategy(BaseStrategy):
     """
-    雙均線策略 (Dual Moving Average Cross)
-    邏輯:
-    1. 快線(Fast MA) 上穿 慢線(Slow MA) -> 做多 (Long)
-    2. 快線(Fast MA) 下穿 慢線(Slow MA) -> 做空 (Short)
+    雙均線策略 V3.4 (Fix Argument Shift)
+    
+    修正:
+    1. SignalEvent 實例化改為「關鍵字參數 (Keyword Arguments)」，防止欄位錯位。
+    2. 解決 mock_executor 讀到錯誤 signal_type 的問題。
     """
-    def __init__(self, fast_window: int = 10, slow_window: int = 60):
-        super().__init__("MA_Cross_Strategy")
+    def __init__(self, fast_window=None, slow_window=None, threshold=None, resample=None, stop_loss=None):
+        name = f"MA({fast_window or 30}/{slow_window or 240})" # 修改顯示名稱
+        super().__init__(name)
         
-        # 從 Settings 讀取參數 (如果沒傳入的話)
-        self.fast_window = fast_window or Settings.STRATEGY_MA_FAST
-        self.slow_window = slow_window or Settings.STRATEGY_MA_SLOW
+        # 讀取 Settings，如果 Settings 沒定義就用冠軍參數當預設
+        self.fast_window = fast_window if fast_window else getattr(Settings, 'STRATEGY_MA_FAST', 30)
+        self.slow_window = slow_window if slow_window else getattr(Settings, 'STRATEGY_MA_SLOW', 240)
+        self.threshold = threshold if threshold is not None else getattr(Settings, 'STRATEGY_THRESHOLD', 5.0)
+        self.resample_min = resample if resample else getattr(Settings, 'STRATEGY_RESAMPLE_MIN', 5)
         
-        # 歷史收盤價容器 (只存需要的長度，避免記憶體爆炸)
-        # 為了計算 MA，我們至少需要 slow_window + 一些緩衝
-        self.history_closes = deque(maxlen=self.slow_window + 10)
+        # 讓 Stop Loss 也能被優化
+        self.stop_loss = stop_loss if stop_loss else getattr(Settings, 'STOP_LOSS_POINT', 400.0)
+
+        self.raw_bars = deque(maxlen=2000)
+        self.entry_price = 0.0
         
-        print(f"🧠 [MAStrategy] 初始化完成 (Fast={self.fast_window}, Slow={self.slow_window})")
+        # 增加一個靜音模式旗標，優化時不要印那些 Debug 訊息
+        self.silent_mode = True
 
     def on_bar(self, bar: BarEvent) -> SignalEvent:
         if not self.active: return None
+        
+        # 1. 檢查硬止損
+        sl_signal = self._check_stop_loss(bar.close)
+        if sl_signal: return sl_signal
 
-        # 1. 儲存最新收盤價
-        self.history_closes.append(bar.close)
+        # 2. 儲存資料
+        self.raw_bars.append({
+            'datetime': bar.timestamp,
+            'close': bar.close
+        })
 
-        # 2. 檢查資料長度是否足夠計算 MA
-        if len(self.history_closes) < self.slow_window:
+        # 3. 資料量檢查
+        if len(self.raw_bars) < (self.slow_window * self.resample_min):
             return None
 
-        # 3. 計算 MA (使用 Pandas)
-        closes = pd.Series(self.history_closes)
-        ma_fast = closes.rolling(window=self.fast_window).mean().iloc[-1]
-        ma_slow = closes.rolling(window=self.slow_window).mean().iloc[-1]
-        
-        # 取得前一根的 MA 值 (用於判斷交叉)
-        prev_ma_fast = closes.rolling(window=self.fast_window).mean().iloc[-2]
-        prev_ma_slow = closes.rolling(window=self.slow_window).mean().iloc[-2]
+        # 4. 執行 Resample
+        df = pd.DataFrame(self.raw_bars)
+        df.set_index('datetime', inplace=True)
+        resampled = df['close'].resample(f"{self.resample_min}min").last().dropna()
 
-        # 4. 產生訊號邏輯 (黃金交叉 / 死亡交叉)
+        if len(resampled) < self.slow_window:
+            return None
+
+        # 5. 計算 MA
+        ma_fast = resampled.rolling(window=self.fast_window).mean().iloc[-1]
+        ma_slow = resampled.rolling(window=self.slow_window).mean().iloc[-1]
+        
+        if np.isnan(ma_fast) or np.isnan(ma_slow): return None
+
+        current_price = resampled.iloc[-1]
+
+        # 6. 產生訊號
         signal = None
-        
-        # 黃金交叉 (快線向上穿過慢線)
-        if prev_ma_fast <= prev_ma_slow and ma_fast > ma_slow:
-            # 只有當我們 "不是" 多單時才進場
-            if self.position <= 0:
-                signal = SignalEvent(
-                    symbol=bar.symbol,
-                    signal_type=SignalType.LONG,
-                    reason=f"Golden Cross (Fast:{ma_fast:.1f} > Slow:{ma_slow:.1f})"
-                )
+        diff = ma_fast - ma_slow
+        is_bullish = diff > self.threshold
+        is_bearish = diff < -self.threshold
 
-        # 死亡交叉 (快線向下穿過慢線)
-        elif prev_ma_fast >= prev_ma_slow and ma_fast < ma_slow:
-            # 只有當我們 "不是" 空單時才進場
-            if self.position >= 0:
-                signal = SignalEvent(
-                    symbol=bar.symbol,
-                    signal_type=SignalType.SHORT,
-                    reason=f"Death Cross (Fast:{ma_fast:.1f} < Slow:{ma_slow:.1f})"
-                )
+        # Debug 顯示
+        if bar.timestamp.minute == 0 and bar.timestamp.second == 0:
+            status = "WAIT"
+            if is_bullish: status = "BULL ZONE"
+            if is_bearish: status = "BEAR ZONE"
+            if not self.silent_mode:
+                print(f"🕵️ [Debug {bar.timestamp.strftime('%H:%M')}] Price:{current_price:.0f} | Diff:{diff:.1f} ({status})")
 
-        # 5. 回傳訊號 (如果有的話)
-        if signal:
-            print(f"💡 [Strategy Signal] {signal.signal_type} @ {bar.close} | Reason: {signal.reason}")
-        
+        # 進場邏輯 (使用關鍵字參數修復錯位問題)
+        if is_bullish and self.position <= 0:
+            signal = SignalEvent(
+                type=EventType.SIGNAL,          # 明確指定 type
+                symbol=bar.symbol,              # 明確指定 symbol
+                signal_type=SignalType.LONG,    # 明確指定 signal_type
+                strength=1.0,
+                reason=f"Bullish: Diff {diff:.1f} > {self.threshold}"
+            )
+            self.entry_price = current_price
+
+        elif is_bearish and self.position >= 0:
+            signal = SignalEvent(
+                type=EventType.SIGNAL,
+                symbol=bar.symbol,
+                signal_type=SignalType.SHORT,
+                strength=1.0,
+                reason=f"Bearish: Diff {diff:.1f} < -{self.threshold}"
+            )
+            self.entry_price = current_price
+
         return signal
 
+    def _check_stop_loss(self, current_price: float) -> SignalEvent:
+        if self.position == 0: return None
+        pnl = (current_price - self.entry_price) if self.position > 0 else (self.entry_price - current_price)
+        
+        if pnl <= -self.stop_loss:
+            self.entry_price = 0
+            # 這裡也要用關鍵字參數
+            return SignalEvent(
+                type=EventType.SIGNAL,
+                symbol="", 
+                signal_type=SignalType.FLATTEN, 
+                reason=f"STOP LOSS triggered (-{self.stop_loss:.0f} pts)"
+            )
+        return None
+
     def on_tick(self, tick: TickEvent) -> SignalEvent:
-        # MA 策略通常只看 K 棒收盤，這裡暫時不需要 Tick 級別的邏輯
-        # 除非你要做 Tick 級別的硬止損 (未來可以加在這裡)
         return None

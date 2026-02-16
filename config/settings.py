@@ -19,10 +19,19 @@ class Settings:
     SYMBOL_CODE = "TMF" 
     EXCHANGE = "TAIFEX"
 
-    # --- 策略參數 (禁止在策略程式碼中寫死) ---
-    STRATEGY_MA_FAST = 10
+    # --- 策略參數 (冠軍組合 2026-02-16) ---
+    # Fast: 30 * 5min = 150 min
+    # Slow: 240 * 5min = 1200 min
+    STRATEGY_MA_FAST = 30
     STRATEGY_MA_SLOW = 240
-    STOP_LOSS_POINT = 400  # 硬止損點數
+    
+    # 記得我們還有 Threshold 跟 Resample，這兩個原本沒寫在 Settings 裡
+    # 建議加進去，或是直接改策略預設值
+    STRATEGY_THRESHOLD = 5.0
+    STRATEGY_RESAMPLE_MIN = 5
+
+    # --- 風險控管 ---
+    STOP_LOSS_POINT = 400.0     # 硬止損 (點數)
     
     # --- 系統設定 ---
     LOG_LEVEL = "INFO"
