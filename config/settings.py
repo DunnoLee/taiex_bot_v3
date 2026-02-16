@@ -31,7 +31,7 @@ class Settings:
     STRATEGY_RESAMPLE_MIN = 5
 
     # --- 風險控管 ---
-    STOP_LOSS_POINT = 400.0     # 硬止損 (點數)
+    STOP_LOSS_POINT = 300.0     # 硬止損 (點數)
     
     # --- 系統設定 ---
     LOG_LEVEL = "INFO"

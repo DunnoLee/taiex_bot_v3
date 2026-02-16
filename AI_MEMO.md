@@ -5,50 +5,34 @@
 > **Architecture:** Event-Driven (Feeder -> Aggregator -> Strategy -> Execution)
 
 ## 1. 核心哲學 (Core Philosophy)
-1.  **Strict Modularity:**
-    - `Strategy` (Brain) is pure logic. It consumes `BarEvent` and produces `SignalEvent`.
-    - `ShioajiFeeder` (Live) and `CsvHistoryFeeder` (Mock) must be interchangeable.
-2.  **Simulation Parity:**
-    - The `BarAggregator` translates real-time Ticks into Bars, ensuring the Strategy sees the same data structure in Live mode as it does in Backtest mode.
-3.  **Config Centralization:**
-    - All params in `config/settings.py`. No hard-coding.
+1.  **Strict Modularity:** Strategy is pure logic.
+2.  **Simulation Parity:** Live & Backtest share the exact same logic.
+3.  **Data-Driven:** All parameters must be verified by backtesting, not guessing.
 
 ## 2. 系統架構 (System Architecture)
-* **DataFeeder:**
-    * `CsvHistoryFeeder`: Reads historical CSV (Time/Open/High/Low/Close/Volume) for backtesting.
-    * `ShioajiFeeder`: Connects to API, auto-selects Front Month contract (e.g., TMFB6), streams Ticks.
-* **Translator:**
-    * `BarAggregator`: Accumulates Ticks -> Generates 1-min `BarEvent`.
-* **Strategy:**
-    * `MAStrategy`: Dual MA Cross (Fast/Slow). Pure logic, API-agnostic.
-* **Execution:**
-    * `MockExecutor`: Calculates PnL instantly for backtesting.
-    * `RealExecutor`: (Pending Implementation) Handles Shioaji orders.
+* **Feeder:** `ShioajiFeeder` (Live) / `CsvHistoryFeeder` (Mock)
+* **Translator:** `BarAggregator` (Tick -> 1m Bar)
+* **Strategy:** `MAStrategy` (V3.4)
+    * **Logic:** Dual MA Cross (Fast/Slow) on **Resampled K-Bars**.
+    * **Safety:** Hard Stop Loss mechanism.
+* **Notification:** `TelegramCommander` (Bidirectional).
 
-## 3. 開發日誌 (Development Log)
-- [x] **Phase 0:** Environment Setup (Python 3.12, .venv, settings.py).
-- [x] **Phase 1: Skeleton & Data Flow:** Defined `Event` classes (Tick, Bar, Signal).
-- [x] **Phase 2: Strategy Porting:** Implemented `MAStrategy` (TaLib-free).
-- [x] **Phase 3: Mock Replay:** Validated strategy with `CsvHistoryFeeder` & `MockExecutor` (Found -370k loss in range market).
-- [x] **Phase 4: Live Data Connection:**
-    - Implemented `ShioajiFeeder` with robust contract lookup.
-    - Implemented `BarAggregator` to bridge Tick -> Strategy.
-    - Verified `main_live.py` connection to TMF.
-- [ ] **Phase 5: Remote Control (Commander):** Telegram integration.
-- [ ] **Phase 6: Live Execution:** Real order placement logic.
+## 3. 獲利模型 (The Holy Grail Parameters)
+* **Date Verified:** 2026-02-16
+* **Data Source:** TMF History (70k bars)
+* **Best Settings:**
+    * **Timeframe:** 5 min Resample (Fast=30, Slow=240) -> 相當於 2.5hr vs 20hr 均線。
+    * **Filter:** Threshold 5.0 pts.
+    * **Risk Control:** Stop Loss **300 pts**.
+* **Performance:** Net Profit **+$69,520 TWD** (Win Rate ~36%, High Risk/Reward Ratio).
 
+## 4. 開發日誌 (Development Log)
+- [x] **Phase 1-3:** Skeleton, Strategy Porting, Mock Replay.
+- [x] **Phase 4:** Live Data Connection (Shioaji TMFB6).
+- [x] **Phase 5:** Optimization (Found optimal params: 30/240/300).
+- [ ] **Phase 6:** **Interactive Commander** (Bidirectional Telegram Control).
+- [ ] **Phase 7:** Real Execution (Shioaji Order Placement).
 
-## 4. 當前狀態 (Current Context)
-* **Last Updated:** 2026-02-16 00:45 (Monday Morning)
-* **Status:** Phase 5 COMPLETE. System is LIVE-READY.
-* **Achievements:**
-    - [x] **Telegram Integration:** Successfully receiving startup reports on mobile.
-    - [x] **Live Data:** Subscribing to TMFB6 contracts correctly.
-    - [x] **Mock Replay:** Verified strategy logic with historical data (-370k loss in range market confirmed).
-* **Next Steps (Post-Launch):**
-    - [ ] **Phase 6: Real Execution:** Implement `RealExecutor` to place actual orders via Shioaji.
-    - [ ] **Phase 7: Strategy Optimization:** The current MA strategy loses money in choppy markets. We need to add filters (e.g., ADX, Volume) in `modules/ma_strategy.py`.
-    - [ ] **Phase 8: Remote Control:** Add Telegram commands (e.g., `/status`, `/stop`) to control the bot from the phone.
-
----
-*此檔案由 AI 維護，作為長期記憶與架構守門員。每次重大更新請同步修改此檔。*
+## 5. 當前狀態 (Current Context)
+* **Status:** Optimization Complete. System is profitable in backtests.
+* **Next Priority:** Implement Interactive Commander (`/status`, `/stop`) to allow remote monitoring and control.
