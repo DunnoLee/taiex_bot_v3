@@ -6,6 +6,7 @@ from modules.ma_strategy import MAStrategy
 from modules.commander import TelegramCommander
 from modules.mock_executor import MockExecutor    # <-- 用 Mock 假裝成交
 from core.event import BarEvent, SignalEvent
+from core.loader import load_history_data
 
 # --- 全域狀態 ---
 system_running = True
@@ -22,6 +23,14 @@ def main():
     # 1. 初始化
     commander = TelegramCommander()
     
+    # 🧪 測試 loader 是否能正常讀取 (這就是你想要的同步測試！)
+    print("🧪 [Test] 正在測試共用 Loader...")
+    test_bars = load_history_data("data/history/TMF_History.csv", tail_count=10)
+    if len(test_bars) == 10:
+        print("✅ [Test] Loader 運作正常！")
+    else:
+        print("❌ [Test] Loader 異常！")
+        
     # ⚠️ 關鍵差異: 使用 CSV Feeder，但速度設慢一點 (speed=1.0 代表 1秒模擬1秒)
     # 如果你想快一點測試，可以設 speed=0.1 (10倍速)
     # 為了測試 Telegram 互動，建議設 speed=0.5 左右，才來得及打字

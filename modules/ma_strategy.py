@@ -26,7 +26,7 @@ class MAStrategy(BaseStrategy):
         # 讓 Stop Loss 也能被優化
         self.stop_loss = stop_loss if stop_loss else getattr(Settings, 'STOP_LOSS_POINT', 400.0)
 
-        self.raw_bars = deque(maxlen=2000)
+        self.raw_bars = deque(maxlen=5000)
         self.entry_price = 0.0
         
         # 增加一個靜音模式旗標，優化時不要印那些 Debug 訊息

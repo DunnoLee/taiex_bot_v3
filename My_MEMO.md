@@ -19,3 +19,5 @@ Executor 換掉： 用 MockExecutor 取代未來的 RealExecutor（假裝下單�
 Telegram 留著： 這是真的！你可以用手機跟這個「假行情」互動。
 
 ***telegram /buy, /sell, 手動下單
+
+***sync倉位

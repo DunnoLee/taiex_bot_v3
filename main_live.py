@@ -8,6 +8,7 @@ from modules.ma_strategy import MAStrategy
 from modules.commander import TelegramCommander
 from core.aggregator import BarAggregator
 from core.event import BarEvent, SignalEvent
+from core.loader import load_history_data
 
 # --- 全域狀態 ---
 system_running = True       # 程式是否執行中
@@ -23,56 +24,13 @@ def main():
     feeder = ShioajiFeeder()
     strategy = MAStrategy() 
     
-    # ---------------------------------------------------
-    # 🚀 新增：歷史資料預載邏輯 (Warm-up)
-    # ---------------------------------------------------
-    HISTORY_FILE = "data/history/TMF_History.csv" # 確保你有這個檔，或是更即時的歷史檔
-    
-    if os.path.exists(HISTORY_FILE):
-        try:
-            print(f"📂 [Warmup] 正在讀取歷史資料: {HISTORY_FILE} ...")
-            
-            # 1. 讀取 CSV
-            df = pd.read_csv(HISTORY_FILE)
-            
-            # 2. 清理欄位名稱 (去除前後空白，避免 'Time ' 這種隱形錯誤)
-            df.columns = [c.strip() for c in df.columns]
-            
-            # 3. 解析時間 (Shioaji 的 'Time' 欄位已經是完整時間字串)
-            if 'Time' in df.columns:
-                # 將字串轉為 datetime 物件
-                df['datetime'] = pd.to_datetime(df['Time'])
-            else:
-                raise ValueError(f"❌ 找不到 'Time' 欄位！目前的欄位: {df.columns.tolist()}")
-
-            # 4. 確認收盤價欄位
-            if 'Close' not in df.columns:
-                raise ValueError(f"❌ 找不到 'Close' 欄位！目前的欄位: {df.columns.tolist()}")
-
-            # 5. 取最後 3000 筆 (確保足夠計算 MA240)
-            recent_data = df.tail(3000)
-            
-            # 6. 轉換格式並載入
-            history_bars = []
-            for _, row in recent_data.iterrows():
-                history_bars.append({
-                    'datetime': row['datetime'],
-                    # 確保轉為 float
-                    'close': float(row['Close']) 
-                })
-            
-            # 7. 注入策略
-            if history_bars:
-                strategy.load_history_bars(history_bars)
-                # 讓 Commander 也知道一下
-                commander.send_message(f"✅ **歷史資料預載成功**\n已載入 {len(history_bars)} 根 K 棒 (Shioaji 格式)")
-            
-        except Exception as e:
-            print(f"⚠️ 歷史資料預載失敗 (策略將從 0 開始累積): {e}")
-            import traceback
-            traceback.print_exc()
+    # 🚀 使用共用模組載入歷史資料
+    history_bars = load_history_data("data/history/TMF_History.csv", tail_count=3000)
+    if history_bars:
+        strategy.load_history_bars(history_bars)
+        commander.send_message(f"✅ **暖機完成**\n載入 {len(history_bars)} 根 K 棒")
     else:
-        print(f"⚠️ 找不到歷史資料檔: {HISTORY_FILE} (請確認路徑)")
+        print("⚠️ 無歷史資料，從 0 開始")
 
     # 2. 定義 Commander 的回呼函數
     
