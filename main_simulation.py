@@ -12,7 +12,7 @@ system_running = True
 auto_trading_active = True
 
 # --- 設定 ---
-DATA_FILE = "data/TMF_History.csv" # 確保你有這份檔案
+DATA_FILE = "data/history/TMF_History.csv" # 確保你有這份檔案
 
 def main():
     global system_running, auto_trading_active
@@ -25,7 +25,7 @@ def main():
     # ⚠️ 關鍵差異: 使用 CSV Feeder，但速度設慢一點 (speed=1.0 代表 1秒模擬1秒)
     # 如果你想快一點測試，可以設 speed=0.1 (10倍速)
     # 為了測試 Telegram 互動，建議設 speed=0.5 左右，才來得及打字
-    feeder = CsvHistoryFeeder(DATA_FILE, speed=1.0) 
+    feeder = CsvHistoryFeeder(DATA_FILE, speed=0.1) 
     
     strategy = MAStrategy()
     executor = MockExecutor(initial_capital=500000) # 模擬帳戶

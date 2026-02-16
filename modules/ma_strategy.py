@@ -119,3 +119,19 @@ class MAStrategy(BaseStrategy):
 
     def on_tick(self, tick: TickEvent) -> SignalEvent:
         return None
+    
+    def load_history_bars(self, bars_list: list):
+        """
+        預載歷史 K 棒 (快速暖機用)
+        bars_list: 包含字典的列表 [{'datetime':..., 'close':...}, ...]
+        """
+        print(f"🔄 [Strategy] 正在預載 {len(bars_list)} 根歷史 K 棒...")
+        
+        # 直接把資料倒進去 deque
+        for bar_data in bars_list:
+            self.raw_bars.append({
+                'datetime': bar_data['datetime'],
+                'close': bar_data['close']
+            })
+            
+        print(f"✅ [Strategy] 預載完成，目前緩衝區長度: {len(self.raw_bars)}")
