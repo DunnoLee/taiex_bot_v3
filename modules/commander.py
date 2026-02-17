@@ -5,10 +5,10 @@ from config.settings import Settings
 
 class TelegramCommander:
     """
-    雙向指揮官 V3.2 (Zombie Fix)
-    修正:
-    1. 啟動時記錄時間戳記。
-    2. 忽略啟動之前發送的「歷史訊息」，避免一開機就被舊的 /kill 殺死。
+    雙向指揮官 V3.3 (Trader Edition)
+    新增:
+    1. 手動交易指令: /buy, /sell
+    2. 同步指令: /sync (強制同步真實倉位)
     """
     def __init__(self):
         self.token = Settings.TELEGRAM_TOKEN
@@ -87,6 +87,7 @@ class TelegramCommander:
         text = message["text"].strip()
         sender_id = str(message["chat"]["id"])
         
+        
         # 1. 檢查發送者
         if sender_id != self.chat_id: return
 
@@ -101,39 +102,70 @@ class TelegramCommander:
 
         print(f"📩 [Commander] 收到指令: {text}")
 
+        # --- 指令路由 (新增交易功能) ---
+        parts = text.split() # 支援參數，例如 /buy 2 (買兩口)
+        cmd = parts[0].lower()
+        
         # --- 指令路由 (不變) ---
-        if text == "/start":
+        if cmd == "/start":
             self.send_message("▶️ **收到指令：恢復自動交易**")
             if self.toggle_trading_cb: self.toggle_trading_cb(True)
 
-        elif text == "/stop":
-            self.send_message("⏸ **收到指令：暫停自動交易 (系統仍在線上)**")
+        elif cmd == "/stop":
+            self.send_message("⏸ **收到指令：暫停自動交易**")
             if self.toggle_trading_cb: self.toggle_trading_cb(False)
 
-        elif text == "/status":
+        elif cmd == "/status":
             if self.get_status_cb: self.send_message(self.get_status_cb())
 
-        elif text == "/balance":
+        elif cmd == "/balance":
             if self.get_balance_cb: self.send_message(self.get_balance_cb())
 
-        elif text == "/kill":
+        # 🆕 新增：手動下單
+        elif cmd == "/buy":
+            qty = 1
+            if len(parts) > 1 and parts[1].isdigit():
+                qty = int(parts[1])
+            self.send_message(f"🔴 **收到手動指令：買進 {qty} 口**")
+            if self.manual_trade_cb: self.manual_trade_cb("BUY", qty)
+
+        elif cmd == "/sell":
+            qty = 1
+            if len(parts) > 1 and parts[1].isdigit():
+                qty = int(parts[1])
+            self.send_message(f"🟢 **收到手動指令：賣出 {qty} 口**")
+            if self.manual_trade_cb: self.manual_trade_cb("SELL", qty)
+
+        # 🆕 新增：強制同步
+        elif cmd == "/sync":
+            self.send_message("🔄 **收到指令：強制同步真實倉位...**")
+            if self.sync_position_cb: 
+                new_pos = self.sync_position_cb()
+                self.send_message(f"✅ **同步完成**\n目前策略認知倉位已修正為: {new_pos}")
+
+        elif cmd == "/kill":
             self.send_message("💀 **收到指令：系統完全關閉 (Bye)**")
             if self.shutdown_cb: self.shutdown_cb()
 
-        elif text == "/help":
+        elif cmd == "/help":
             self.send_message(
                 "🎮 **指令列表**\n"
                 "`/start` - 恢復自動交易\n"
                 "`/stop` - 暫停自動交易\n"
+                "`/buy [口數]` - 手動買進\n"
+                "`/sell [口數]` - 手動賣出\n"
+                "`/sync` - 同步真實倉位\n"
                 "`/status` - 系統狀態\n"
-                "`/balance` - 帳戶權益\n"
-                "`/kill` - 完全關閉程式"
+                "`/kill` - 關閉程式"
             )
         else:
             self.send_message(f"❓ 未知指令: {text}")
 
-    def set_callbacks(self, status_cb, balance_cb, toggle_cb, shutdown_cb):
+    # 記得更新 callback 設定介面
+    def set_callbacks(self, status_cb, balance_cb, toggle_cb, shutdown_cb, manual_trade_cb, sync_position_cb):
         self.get_status_cb = status_cb
         self.get_balance_cb = balance_cb
         self.toggle_trading_cb = toggle_cb
         self.shutdown_cb = shutdown_cb
+        self.manual_trade_cb = manual_trade_cb  # 🆕
+        self.sync_position_cb = sync_position_cb # 🆕
