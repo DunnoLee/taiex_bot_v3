@@ -9,8 +9,8 @@ from config.settings import Settings
 
 def run_visualizer():
     # 1. 讀取兩份資料
-    history_path = "data/history/TMF_FULL_REPLAY.csv"
-    trade_log_path = "data/backtest_detail.csv"
+    history_path = "data/history/TMF_History.csv"
+    trade_log_path = "data/backtest_results/backtest_log.csv"
     
     if not os.path.exists(history_path) or not os.path.exists(trade_log_path):
         print("❌ 找不到資料檔，請確認 history_merger.py 和 backtest.py 都跑過。")

@@ -8,9 +8,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import Settings
 
 def run_deep_analysis():
-    file_path = "data/backtest_detail.csv"
+    file_path = "data/backtest_results/backtest_log.csv"
     if not os.path.exists(file_path):
-        print("❌ 找不到 backtest_detail.csv，請先執行最新版 backtest.py")
+        print("❌ 找不到 backtest_detail.csv，請先執行最新版 main_backtest.py")
         return
 
     df = pd.read_csv(file_path)

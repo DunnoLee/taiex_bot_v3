@@ -7,23 +7,32 @@ from core.aggregator import BarAggregator
 from core.event import BarEvent, SignalEvent, SignalType, EventType
 from modules.ma_strategy import MAStrategy
 from modules.commander import TelegramCommander
+from core.recorder import TradeRecorder
 
 class BotEngine:
     """
     通用機器人引擎 (All-in-One Brain)
     負責協調 Feeder, Strategy, Executor 與 Telegram 之間的運作。
     """
-    def __init__(self, feeder, executor, symbol="TMF"):
+    def __init__(self, feeder, executor, symbol="TMF", enable_telegram=True):
         self.feeder = feeder
         self.executor = executor
         self.symbol = symbol
-        
+        self.enable_telegram = enable_telegram
+
         # 1. 初始化核心組件
         self.commander = TelegramCommander()
+        if not self.enable_telegram:
+            # 強制關閉 Commander 的發送功能
+            self.commander.enabled = False 
+            print("🔕 [Engine] 靜音模式: Telegram 通知已關閉")
         # 讓策略讀取 Settings 的預設值 (MA30/240, SL300)
         self.strategy = MAStrategy()
         self.aggregator = BarAggregator(symbol)
         
+        # 🆕 新增: 啟動黑盒子記錄器
+        self.recorder = TradeRecorder()
+
         # 2. 全域狀態
         self.system_running = True
         self.auto_trading_active = True
@@ -185,6 +194,23 @@ class BotEngine:
             
             # 5. 發送通知
             if trade_msg:
+                # 解析動作 (LONG/SHORT)
+                action = "BUY" if signal.signal_type in ["LONG", "FLATTEN_LONG"] else "SELL"
+                
+                # 簡單計算 PnL (如果是平倉才有 PnL，開倉通常是 0)
+                # 注意: 這裡的 PnL 最好是由 executor 回傳，我們這邊簡化處理
+                # 如果你想精準記錄 PnL，建議讓 Executor 回傳詳細 dict 而不是字串 msg
+                
+                self.recorder.write_trade(
+                    timestamp=bar.timestamp,
+                    symbol=self.symbol,
+                    action=signal.signal_type.name, # LONG, SHORT, FLATTEN
+                    price=bar.close,
+                    qty=1, # 暫定 1 口
+                    strategy_name=self.strategy.name,
+                    pnl=0, # 暫時填 0，未來 Executor 要回傳真實損益
+                    msg=signal.reason
+                )
                 self.commander.send_message(f"⚡️ **自動成交**\n{trade_msg}\n原因: {signal.reason}")
 
     def start(self):
