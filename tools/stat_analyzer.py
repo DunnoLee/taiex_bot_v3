@@ -1,64 +1,74 @@
 import pandas as pd
-import numpy as np
-import os
 import sys
+import os
 
-# 導航修正
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import Settings
-
-def run_deep_analysis():
-    file_path = "data/backtest_results/backtest_log.csv"
-    if not os.path.exists(file_path):
-        print("❌ 找不到 backtest_detail.csv，請先執行最新版 main_backtest.py")
+def analyze_log(log_path):
+    print(f"📊 [Stat Analyzer] 正在分析: {log_path} ...")
+    
+    if not os.path.exists(log_path):
+        print(f"❌ 找不到檔案: {log_path}")
         return
 
-    df = pd.read_csv(file_path)
-    df['Time'] = pd.to_datetime(df['Time'])
+    try:
+        # 1. 讀取 V3 格式的 Log
+        df = pd.read_csv(log_path)
+        
+        # 2. 轉換格式
+        df['Time'] = pd.to_datetime(df['Time'])
+        df['Real_PnL'] = pd.to_numeric(df['Real_PnL'], errors='coerce').fillna(0)
+        
+        # 3. 過濾出有損益的交易 (Action 為平倉或反手時會產生 PnL)
+        # 注意: V3 的 PnL 記錄在每一筆成交上，開倉通常是 0，平倉才有值
+        trades = df[df['Real_PnL'] != 0].copy()
+        
+        if len(trades) == 0:
+            print("⚠️ Log 中沒有發現已實現損益 (Real_PnL 全為 0)")
+            return
 
-    # 1. 提取每筆已實現損益 (只要 equity 有變動的地方)
-    # 這裡我們計算 equity 的差值來取得單筆損益
-    pnl_series = df['equity'].diff().dropna()
-    pnl_series = pnl_series[pnl_series != 0] # 只看有變動的筆數
+        # 4. 計算統計數據
+        total_pnl = trades['Real_PnL'].sum()
+        win_trades = trades[trades['Real_PnL'] > 0]
+        loss_trades = trades[trades['Real_PnL'] <= 0]
+        
+        win_count = len(win_trades)
+        loss_count = len(loss_trades)
+        total_count = len(trades)
+        
+        win_rate = (win_count / total_count * 100) if total_count > 0 else 0
+        avg_win = win_trades['Real_PnL'].mean() if win_count > 0 else 0
+        avg_loss = loss_trades['Real_PnL'].mean() if loss_count > 0 else 0
+        pf = abs(avg_win / avg_loss) if avg_loss != 0 else 0
+        
+        # 5. 計算權益曲線與回撤 (Drawdown)
+        df['Cumulative_PnL'] = df['Real_PnL'].cumsum()
+        df['Peak'] = df['Cumulative_PnL'].cummax()
+        df['Drawdown'] = df['Cumulative_PnL'] - df['Peak']
+        max_dd = df['Drawdown'].min()
 
-    wins = pnl_series[pnl_series > 0]
-    losses = pnl_series[pnl_series < 0]
+        # 6. 輸出報告
+        print("\n" + "="*40)
+        print("🏆 V3 策略績效報告")
+        print("="*40)
+        print(f"💰 總損益: ${total_pnl:,.0f} TWD")
+        print(f"🔢 交易筆數: {total_count} 筆")
+        print(f"📈 勝率: {win_rate:.2f}%")
+        print(f"⚖️ 獲利因子 (PF): {pf:.2f}")
+        print(f"💵 平均獲利: ${avg_win:,.0f}")
+        print(f"💸 平均虧損: ${avg_loss:,.0f}")
+        print(f"📉 最大回撤 (Max DD): ${max_dd:,.0f}")
+        print("="*40 + "\n")
 
-    # 2. 核心數據計算
-    total_trades = len(pnl_series)
-    win_rate = len(wins) / total_trades if total_trades > 0 else 0
-    avg_win = wins.mean() if not wins.empty else 0
-    avg_loss = abs(losses.mean()) if not losses.empty else 0
-    rr_ratio = avg_win / avg_loss if avg_loss > 0 else 0
-    
-    # 期待值 (Expectancy): 每一筆交易預期能賺幾點
-    expectancy = (win_rate * avg_win) - ((1 - win_rate) * avg_loss)
-    
-    # 總淨利 (最終 Equity)
-    net_profit = df['equity'].iloc[-1]
-    mdd = df['drawdown'].min()
-
-    # 3. 輸出報表
-    print(f"\n📈 --- 策略大腦深度診斷報告 (TF: {Settings.TIMEFRAME}) ---")
-    print("-" * 45)
-    print(f"✅ 總交易筆數: {total_trades:>10} 筆")
-    print(f"🎯 勝    率: {win_rate*100:>10.2f} %")
-    print(f"💰 平均獲利: {avg_win:>10.2f} 點")
-    print(f"💸 平均虧損: {avg_loss:>10.2f} 點")
-    print(f"⚖️ 賺賠比 (RR): {rr_ratio:>10.2f}")
-    print(f"🧮 期待值 (Exp): {expectancy:>10.2f} 點/筆")
-    print("-" * 45)
-    print(f"🏆 最終總淨利: {net_profit:>10.1f} 點")
-    print(f"📉 最大回撤 (MDD): {mdd:>10.1f} 點")
-    print(f"🚀 獲利比 (Profit/MDD): {abs(net_profit/mdd):>10.2f}")
-    print("-" * 45)
-
-    if expectancy < 10:
-        print("⚠️ 警告：期待值過低，滑點與手續費可能吃掉所有利潤！")
-    elif rr_ratio < 2:
-        print("💡 建議：賺賠比較低，可以嘗試優化停損或移動停利。")
-    else:
-        print("🌟 診斷結論：這是一個強健的大趨勢策略。")
+    except Exception as e:
+        print(f"❌ 分析失敗: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
-    run_deep_analysis()
+    if len(sys.argv) < 2:
+        print("使用方式: python tools/stat_analyzer.py <log_file_path>")
+        # 預設路徑 (方便你直接跑)
+        default_path = "data/backtest_results/backtest_log.csv"
+        if os.path.exists(default_path):
+            analyze_log(default_path)
+    else:
+        analyze_log(sys.argv[1])

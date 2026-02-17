@@ -5,7 +5,7 @@ from core.engine import BotEngine
 def main():
     # 1. 準備零件 (Sim 版)
     # speed=0.5 方便你測試 telegram 互動
-    feeder = CsvHistoryFeeder("data/history/TMF_History.csv", speed=0.1) 
+    feeder = CsvHistoryFeeder("data/history/TMF_History.csv", speed=0.5) 
     executor = MockExecutor(initial_capital=500000)
     
     # 2. 啟動引擎

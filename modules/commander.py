@@ -27,6 +27,10 @@ class TelegramCommander:
         self.get_balance_cb = None
         self.toggle_trading_cb = None
         self.shutdown_cb = None
+        # 新增 flatten_cb
+        self.manual_trade_cb = None
+        self.sync_position_cb = None
+        self.flatten_cb = None  # <--- 新增這個
 
         if self.enabled:
             print("📡 [Commander] 雙向通訊模組 V3.2 (防殭屍版) 已就緒")
@@ -147,6 +151,11 @@ class TelegramCommander:
             self.send_message("💀 **收到指令：系統完全關閉 (Bye)**")
             if self.shutdown_cb: self.shutdown_cb()
 
+        # 🆕 新增：一鍵平倉
+        elif cmd == "/flat" or cmd == "/flatten":
+            self.send_message("⚠️ **收到指令：強制全平倉 (Flatten All)**")
+            if self.flatten_cb: self.flatten_cb()
+
         elif cmd == "/help":
             self.send_message(
                 "🎮 **指令列表**\n"
@@ -154,18 +163,21 @@ class TelegramCommander:
                 "`/stop` - 暫停自動交易\n"
                 "`/buy [口數]` - 手動買進\n"
                 "`/sell [口數]` - 手動賣出\n"
+                "`/flat` - ⚠️ 一鍵全平倉\n"  # <--- 加這行
                 "`/sync` - 同步真實倉位\n"
                 "`/status` - 系統狀態\n"
+                "`/balance` - 權益數查詢\n"
                 "`/kill` - 關閉程式"
             )
         else:
             self.send_message(f"❓ 未知指令: {text}")
 
     # 記得更新 callback 設定介面
-    def set_callbacks(self, status_cb, balance_cb, toggle_cb, shutdown_cb, manual_trade_cb, sync_position_cb):
+    def set_callbacks(self, status_cb, balance_cb, toggle_cb, shutdown_cb, manual_trade_cb, sync_position_cb,flatten_cb):
         self.get_status_cb = status_cb
         self.get_balance_cb = balance_cb
         self.toggle_trading_cb = toggle_cb
         self.shutdown_cb = shutdown_cb
         self.manual_trade_cb = manual_trade_cb  # 🆕
         self.sync_position_cb = sync_position_cb # 🆕
+        self.flatten_cb = flatten_cb
