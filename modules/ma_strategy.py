@@ -1,69 +1,81 @@
 import pandas as pd
 import numpy as np
 from collections import deque
-from core.strategy import BaseStrategy
+from core.base_strategy import BaseStrategy  # <--- 繼承這個
 from core.event import BarEvent, TickEvent, SignalEvent, SignalType, EventType
 from config.settings import Settings
 
 class MAStrategy(BaseStrategy):
     """
-    雙均線策略 V3.4 (Fix Argument Shift)
+    雙均線策略 V3.9 (Re-integrated)
     
-    修正:
-    1. SignalEvent 實例化改為「關鍵字參數 (Keyword Arguments)」，防止欄位錯位。
-    2. 解決 mock_executor 讀到錯誤 signal_type 的問題。
+    結合:
+    1. BaseStrategy 的標準介面 (set_position, name).
+    2. V3.4 的 Resample 與 Deque 優化邏輯.
+    3. Settings 自動參數讀取.
     """
     def __init__(self, fast_window=None, slow_window=None, threshold=None, resample=None, stop_loss=None):
-        name = f"MA({fast_window or 30}/{slow_window or 240})" # 修改顯示名稱
-        super().__init__(name)
-        
-        # 讀取 Settings，如果 Settings 沒定義就用冠軍參數當預設
+        # 1. 處理參數預設值 (優先使用傳入參數，否則讀 Settings)
         self.fast_window = fast_window if fast_window else getattr(Settings, 'STRATEGY_MA_FAST', 30)
         self.slow_window = slow_window if slow_window else getattr(Settings, 'STRATEGY_MA_SLOW', 240)
         self.threshold = threshold if threshold is not None else getattr(Settings, 'STRATEGY_THRESHOLD', 5.0)
         self.resample_min = resample if resample else getattr(Settings, 'STRATEGY_RESAMPLE_MIN', 5)
-        
-        # 讓 Stop Loss 也能被優化
-        self.stop_loss = stop_loss if stop_loss else getattr(Settings, 'STOP_LOSS_POINT', 400.0)
+        self.stop_loss = stop_loss if stop_loss else getattr(Settings, 'STOP_LOSS_POINT', 300.0)
 
-        self.raw_bars = deque(maxlen=5000)
-        self.entry_price = 0.0
+        # 2. 初始化父類別 (註冊名稱)
+        name = f"MA({self.fast_window}/{self.slow_window})"
+        super().__init__(name=name)
         
-        # 增加一個靜音模式旗標，優化時不要印那些 Debug 訊息
-        self.silent_mode = True
+        # 3. 覆蓋父類別的 raw_bars，改用 deque 以提升效能
+        # 父類別是用 list，這裡改用 deque (maxlen 會自動丟棄舊資料)
+        self.raw_bars = deque(maxlen=5000)
+        
+        # entry_price 與 position 父類別已經有了，這裡不需要再宣告
+        # self.silent_mode 用來控制 debug 輸出
+        self.silent_mode = False 
 
     def on_bar(self, bar: BarEvent) -> SignalEvent:
-        if not self.active: return None
-        
-        # 1. 檢查硬止損
-        sl_signal = self._check_stop_loss(bar.close)
+        """
+        核心邏輯
+        """
+        # 1. 檢查硬止損 (Hard Stop Loss)
+        # 注意: self.position 和 self.entry_price 來自父類別
+        sl_signal = self._check_stop_loss(bar.close, bar.symbol)
         if sl_signal: return sl_signal
 
-        # 2. 儲存資料
+        # 2. 儲存資料 (存成 dict 以便轉 DataFrame)
         self.raw_bars.append({
             'datetime': bar.timestamp,
             'close': bar.close
         })
 
-        # 3. 資料量檢查
-        if len(self.raw_bars) < (self.slow_window * self.resample_min):
+        # 3. 資料量檢查 (還不夠做一次 Resample 就不算)
+        # 例如: 240根 * 5分鐘 = 需要 1200 根原始 1分K
+        required_raw_bars = self.slow_window * self.resample_min
+        if len(self.raw_bars) < required_raw_bars:
             return None
 
-        # 4. 執行 Resample
+        # 4. 執行 Resample (關鍵邏輯！)
+        # 將原始 K 棒轉為 Pandas DataFrame
         df = pd.DataFrame(self.raw_bars)
         df.set_index('datetime', inplace=True)
+        
+        # 重取樣：例如 '5min'，取最後一筆 (last)
+        # dropna() 是為了避免剛開始 resample 時產生 NaN
         resampled = df['close'].resample(f"{self.resample_min}min").last().dropna()
 
+        # Resample 後長度不夠也不算
         if len(resampled) < self.slow_window:
             return None
 
         # 5. 計算 MA
+        # 使用 iloc[-1] 取最新的一個值
         ma_fast = resampled.rolling(window=self.fast_window).mean().iloc[-1]
         ma_slow = resampled.rolling(window=self.slow_window).mean().iloc[-1]
         
         if np.isnan(ma_fast) or np.isnan(ma_slow): return None
 
-        current_price = resampled.iloc[-1]
+        current_price = bar.close # 訊號觸發以當前價格為準
 
         # 6. 產生訊號
         signal = None
@@ -71,23 +83,24 @@ class MAStrategy(BaseStrategy):
         is_bullish = diff > self.threshold
         is_bearish = diff < -self.threshold
 
-        # Debug 顯示
-        if bar.timestamp.minute == 0 and bar.timestamp.second == 0:
+        # Debug 顯示 (每 5 分鐘印一次，避免洗版)
+        if not self.silent_mode and bar.timestamp.minute % 5 == 0 and bar.timestamp.second == 0:
             status = "WAIT"
             if is_bullish: status = "BULL ZONE"
             if is_bearish: status = "BEAR ZONE"
-            if not self.silent_mode:
-                print(f"🕵️ [Debug {bar.timestamp.strftime('%H:%M')}] Price:{current_price:.0f} | Diff:{diff:.1f} ({status})")
+            # print(f"🕵️ [{self.name}] P:{current_price:.0f} | Diff:{diff:.1f} ({status})")
 
-        # 進場邏輯 (使用關鍵字參數修復錯位問題)
+        # 進場邏輯
         if is_bullish and self.position <= 0:
             signal = SignalEvent(
-                type=EventType.SIGNAL,          # 明確指定 type
-                symbol=bar.symbol,              # 明確指定 symbol
-                signal_type=SignalType.LONG,    # 明確指定 signal_type
+                type=EventType.SIGNAL,
+                symbol=bar.symbol,
+                signal_type=SignalType.LONG,
                 strength=1.0,
-                reason=f"Bullish: Diff {diff:.1f} > {self.threshold}"
+                reason=f"Golden Cross (Diff {diff:.1f} > {self.threshold})"
             )
+            # 注意: entry_price 在 Engine 成交後會更新，但策略這裡也可以先記一下
+            # 實際更新應由 Engine 回呼 set_position 時處理，或在此暫存
             self.entry_price = current_price
 
         elif is_bearish and self.position >= 0:
@@ -96,42 +109,51 @@ class MAStrategy(BaseStrategy):
                 symbol=bar.symbol,
                 signal_type=SignalType.SHORT,
                 strength=1.0,
-                reason=f"Bearish: Diff {diff:.1f} < -{self.threshold}"
+                reason=f"Death Cross (Diff {diff:.1f} < -{self.threshold})"
             )
             self.entry_price = current_price
 
         return signal
 
-    def _check_stop_loss(self, current_price: float) -> SignalEvent:
+    def _check_stop_loss(self, current_price: float, symbol: str) -> SignalEvent:
+        """停損檢查"""
         if self.position == 0: return None
-        pnl = (current_price - self.entry_price) if self.position > 0 else (self.entry_price - current_price)
         
+        # 計算目前浮動損益 (Points)
+        if self.position > 0:
+            pnl = current_price - self.entry_price
+        else:
+            pnl = self.entry_price - current_price
+        
+        # 觸發停損
         if pnl <= -self.stop_loss:
-            self.entry_price = 0
-            # 這裡也要用關鍵字參數
             return SignalEvent(
                 type=EventType.SIGNAL,
-                symbol="", 
+                symbol=symbol, 
                 signal_type=SignalType.FLATTEN, 
                 reason=f"STOP LOSS triggered (-{self.stop_loss:.0f} pts)"
             )
         return None
 
-    def on_tick(self, tick: TickEvent) -> SignalEvent:
-        return None
-    
     def load_history_bars(self, bars_list: list):
         """
-        預載歷史 K 棒 (快速暖機用)
-        bars_list: 包含字典的列表 [{'datetime':..., 'close':...}, ...]
+        覆蓋父類別方法
+        因為我們用 deque 存 dict，父類別可能存物件，這裡統一格式
         """
-        print(f"🔄 [Strategy] 正在預載 {len(bars_list)} 根歷史 K 棒...")
+        print(f"🔄 [{self.name}] 正在預載 {len(bars_list)} 根歷史 K 棒...")
         
-        # 直接把資料倒進去 deque
-        for bar_data in bars_list:
-            self.raw_bars.append({
-                'datetime': bar_data['datetime'],
-                'close': bar_data['close']
-            })
+        for bar in bars_list:
+            # 判斷傳入的是 dict 還是 BarEvent 物件，做兼容處理
+            if isinstance(bar, dict):
+                data = {
+                    'datetime': bar['datetime'],
+                    'close': bar['close']
+                }
+            else:
+                data = {
+                    'datetime': bar.timestamp,
+                    'close': bar.close
+                }
+            self.raw_bars.append(data)
             
-        print(f"✅ [Strategy] 預載完成，目前緩衝區長度: {len(self.raw_bars)}")
+        print(f"✅ [{self.name}] 預載完成，目前緩衝區長度: {len(self.raw_bars)}")

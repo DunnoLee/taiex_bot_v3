@@ -5,7 +5,7 @@ from config.settings import Settings
 from core.loader import load_history_data
 from core.aggregator import BarAggregator
 from core.event import BarEvent, SignalEvent, SignalType, EventType
-from modules.ma_strategy import MAStrategy
+#from modules.ma_strategy import MAStrategy
 from modules.commander import TelegramCommander
 from core.recorder import TradeRecorder
 
@@ -15,7 +15,8 @@ class BotEngine:
     修正: /balance 與 /status 會依據 Executor 類型，
     自動切換顯示「真實 API 數據」或「模擬帳本數據」。
     """
-    def __init__(self, feeder, executor, symbol="TMF", enable_telegram=True):
+    def __init__(self, strategy, feeder, executor, symbol="TMF", enable_telegram=True):
+        self.strategy = strategy
         self.feeder = feeder
         self.executor = executor
         self.symbol = symbol
@@ -26,7 +27,7 @@ class BotEngine:
         if not self.enable_telegram:
             self.commander.enabled = False
             
-        self.strategy = MAStrategy()
+        #self.strategy = MAStrategy()
         self.aggregator = BarAggregator(symbol)
         self.recorder = TradeRecorder()
         

@@ -5,6 +5,7 @@ from modules.mock_feeder import CsvHistoryFeeder
 from modules.mock_executor import MockExecutor
 from core.engine import BotEngine
 from core.recorder import TradeRecorder
+from modules.ma_strategy import MAStrategy
 
 # --- 設定 ---
 HISTORY_FILE = "data/history/TMF_History.csv"
@@ -14,6 +15,15 @@ def main():
     print(f"📉 TaiEx Bot V3 (Backtest Mode) 啟動...")
     print(f"==========================================")
     
+    my_strategy = MAStrategy(
+        fast_window=30, 
+        slow_window=240, 
+        stop_loss=300.0,
+        threshold=5.0,
+        resample=5
+    )
+    print(f"🧠 [策略] 載入模組: {my_strategy.name}")
+
     # 1. 準備環境
     # 為了避免跟實盤的 Log 混在一起，我們把回測結果放在獨立資料夾
     if not os.path.exists(BACKTEST_DIR):
@@ -25,7 +35,7 @@ def main():
     executor = MockExecutor(initial_capital=1000000)
     
     # 3. 啟動引擎 (關鍵：enable_telegram=False)
-    bot = BotEngine(feeder, executor, symbol="TMF", enable_telegram=False)
+    bot = BotEngine(my_strategy,feeder, executor, symbol="TMF", enable_telegram=False)
     
     # 4. 強制覆寫 Engine 的 Recorder 路徑 (為了把 Log 存到 backtest 資料夾)
     # 這樣你的 Visualizer 比較好找

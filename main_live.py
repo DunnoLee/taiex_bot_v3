@@ -5,8 +5,18 @@ from config.settings import Settings
 from modules.real_executor import RealExecutor
 from modules.shioaji_feeder import ShioajiFeeder
 from core.engine import BotEngine
+from modules.ma_strategy import MAStrategy
 
 def main():
+    my_strategy = MAStrategy(
+        fast_window=30, 
+        slow_window=240, 
+        stop_loss=300.0,
+        threshold=5.0,
+        resample=5
+    )
+    print(f"🧠 [策略] 載入模組: {my_strategy.name}")
+
     print(f"🚀 TaiEx Bot V3 [Live Mode] 啟動中...")
     print(f"==========================================")
 
@@ -55,7 +65,7 @@ def main():
     # -----------------------------------------------------
     # Engine 會把 Feeder 的 Tick 轉成 Bar，再餵給策略，最後叫 Executor 下單
     target_symbol = getattr(Settings, "TARGET_CONTRACT", "TMF202603")
-    bot = BotEngine(feeder, executor, symbol=target_symbol)
+    bot = BotEngine(strategy=my_strategy, feeder=feeder, executor=executor, symbol=target_symbol)
 
     # -----------------------------------------------------
     # 5. 數據預載 (Warm-up) - 雙軌機制的第一步
