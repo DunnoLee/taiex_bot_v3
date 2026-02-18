@@ -6,47 +6,51 @@
 
 ## 0. 開發協議 (Development Protocol) - STRICT
 * **Logic Persistence:** DO NOT silently refactor user-defined logic.
-* **Engine-First:** All business logic resides in `core/engine.py`. `main_live` is the MASTER branch; `main_simulation` is the SHADOW branch.
-* **Consistency:** Mock and Real executors must share logic via `BaseExecutor`.
+* **Engine-First:** `core/engine.py` is the centralized brain. `main_live` is the MASTER; `main_simulation` is the SHADOW.
+* **Shadow Ledger:** `BaseExecutor` handles all PnL/Position logic. `RealExecutor` only handles IO.
 
 ## 1. 核心哲學 (Core Philosophy)
-1.  **Main_Live is King:** All logic is designed for real execution first. Simulation exists only to verify the live code path.
-2.  **Shadow Ledger:** `BaseExecutor` handles all PnL/Position logic. `RealExecutor` only handles IO.
-3.  **Data-Driven:** Parameters verified by 70k bars backtest (MA 30/240).
+1.  **Main_Live is King:** All logic is designed for real execution first.
+2.  **Real-Time Transparency:** `/balance` and `/status` must distinguish between "Shadow PnL" (Strategy view) and "Real Equity" (Broker view).
+3.  **Safety First:** Dry Run mode and CA Cert checks are mandatory for Live execution.
 
 ## 2. 系統架構 (System Architecture)
-* **Brain:** `core/engine.py` (Smart Order Logic, Telegram, Data Flow).
+* **Brain:** `core/engine.py` (V3.8)
+    * **Smart Reporting:** Automatically switches between Mock/Real data for Telegram reports.
+    * **Smart Order Logic:** Auto-reverse, Flatten detection.
 * **Execution:**
     * `BaseExecutor`: Shared logic (Pyramiding, PnL, Position tracking).
     * `RealExecutor` (V3.7): **Production Ready**.
-        * Auto-scans `FutureAccount` (no manual binding).
-        * Validates CA Cert on startup (Exit on failure).
-    * `MockExecutor`: Simple "Return True" dummy.
+        * Auto-scans `FutureAccount`.
+        * Validates CA Cert on startup.
+        * **API Protocol:** Enforces MKT+IOC / LMT+ROD.
+    * `MockExecutor`: Dummy implementation for logic verification.
+* **Data Flow (Planned Phase 9):**
+    * **Cold:** CSV History (Yesterday).
+    * **Warm:** API Backfill (Today's market open to Now).
+    * **Hot:** WebSocket Ticks (Real-time).
 
-### 2.1 Shioaji API 實戰規範 (API Protocol) - CRITICAL
-* **Order Types:**
-    * **Market Order (MKT):** MUST use `OrderType.IOC` (Immediate-or-Cancel).
-    * **Limit Order (LMT):** MUST use `OrderType.ROD` (Rest-of-Day).
-    * *Violation of this rule causes immediate order rejection.*
-* **Data Types:**
-    * API returns `Decimal` types. MUST convert to `float` or `int` immediately upon receipt to prevent serialization errors.
-* **Account Binding:**
-    * Do not assume default account. Must iterate `api.list_accounts()` and find `account.FutureAccount`.
+### 2.1 Shioaji API 實戰規範 (API Protocol)
+* **Order Types:** MKT -> IOC; LMT -> ROD.
+* **Data Types:** Convert `Decimal` to `float/int` immediately.
+* **Contract:** Use logic to resolve `TMF202603` to `TMFC6`.
 
 ## 3. 獲利模型 (The Holy Grail Parameters)
 * **Strategy:** MA(30/240) + Filter(5.0) + SL(300).
 * **Performance:** Net Profit **+$69,520 TWD** (Win Rate ~36%).
 
 ## 4. 開發日誌 (Development Log)
-- [x] **Phase 1-6:** Foundation, Interactive Commander.
-- [x] **Phase 7:** **Engine Refactoring & Tools** (Recorder, Visualizer).
+- [x] **Phase 1-7:** Foundation, Tools, Recorder.
 - [x] **Phase 8:** **Executor Architecture (Completed)**
-    * [x] Implemented `BaseExecutor` (Shadow Ledger).
-    * [x] Implemented `RealExecutor` V3.7 with proven logic (ROD/IOC, Account Scan, Cert Check).
-    * [x] Verified connection with `test_real_connection.py`.
-- [ ] **Phase 9:** **Dual-Track Data Feed** (Next Step)
-    * [ ] Implement API Backfill (Hot Data) to bridge CSV and Real-time.
+    * [x] **BaseExecutor:** Unified logic for PnL and Position tracking.
+    * [x] **RealExecutor:** Implemented Account Scan, CA Cert Check, and Dry Run safety.
+    * [x] **BotEngine V3.8:** Updated `/balance` and `/status` to report Real vs. Shadow data.
+    * [x] **Verification:** Passed connection, account binding, and order parameter tests.
+- [ ] **Phase 9:** **Dual-Track Data Feed** (Current Focus)
+    * [ ] **Goal:** Bridge the gap between CSV (Cold) and WebSocket (Hot).
+    * [ ] Implement `fetch_kbars` in ShioajiFeeder.
+    * [ ] Implement merge logic in Engine.
 
 ## 5. 待辦事項 (User Wishlist)
 * **Dual-Track Data:** Seamlessly merge CSV history + API recent bars + Live Ticks.
-* **Real Execution:** Connect `RealExecutor` to Shioaji Order API.
+* **Real Execution:** Connect `RealExecutor` to Shioaji Order API (Done, pending final "DryRun=False" trade).

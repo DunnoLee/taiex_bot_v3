@@ -22,7 +22,7 @@ def check_environment():
     
     try:
         from config.settings import Settings
-        print(f"✅ Settings 載入成功 (API Key 前三碼: {Settings.API_KEY[:3]}***)")
+        print(f"✅ Settings 載入成功 (API Key 前三碼: {Settings.SHIOAJI_API_KEY[:3]}***)")
     except Exception as e:
         print(f"❌ Settings 載入失敗: {e}")
 

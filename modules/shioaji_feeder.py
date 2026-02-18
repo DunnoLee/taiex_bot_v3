@@ -1,83 +1,122 @@
 import shioaji as sj
-from datetime import datetime
-from core.data_feeder import DataFeeder
-from core.event import TickEvent
 from config.settings import Settings
+import datetime
 
-class ShioajiFeeder(DataFeeder):
-    def __init__(self):
-        super().__init__()
-        self.api = sj.Shioaji()
-        self.target_code = ""
+class ShioajiFeeder:
+    """
+    Shioaji 行情餵食機 (V3.5)
+    負責:
+    1. 接收已經連線的 API 物件
+    2. 訂閱目標合約 (Target Contract)
+    3. 接收即時 Tick -> 轉換格式 -> 傳給 Aggregator
+    """
+    def __init__(self, api: sj.Shioaji):
+        self.api = api
+        self.on_tick_callback = None
+        self.target_code = getattr(Settings, "TARGET_CONTRACT", "TMF202603")
+        self.contract = None
+        
+        # 綁定 API 的 callback 到自己的處理函式
+        self.api.quote.set_on_tick_fop_v1_callback(self._on_tick_arrived)
+
+    def set_on_tick(self, callback):
+        """設定 Tick 接收者 (通常是 Aggregator)"""
+        self.on_tick_callback = callback
 
     def connect(self):
-        print("🔌 [Shioaji] 正在連線...")
-        self.api.login(Settings.API_KEY, Settings.API_SECRET)
-        print(f"✅ 登入成功: {Settings.ACC_ID}")
-
-        # 設定 Callback
-        self.api.quote.set_on_tick_fop_v1_callback(self._on_tick_received)
-
-    def subscribe(self, symbol: str):
-        # 1. 取得類別 (例如 TMF)
-        target_category = symbol or Settings.SYMBOL_CODE
-        print(f"🔍 [Shioaji] 正在搜尋合約類別: {target_category}...")
+        """
+        Feeder 連線
+        (因為 api 是外部傳入且已連線，這裡主要用來確認合約是否存在)
+        """
+        print(f"🔌 [Feeder] 準備訂閱行情: {self.target_code}")
         
-        # 使用 .get() 安全存取，避免當機
-        contracts = self.api.Contracts.Futures.get(target_category)
-        
-        if not contracts:
-            print(f"❌ 找不到類別 '{target_category}' 的合約。")
-            print("💡 提示: 請確認 API 帳號權限或合約代碼 (如 MXF, TMF, TXF)")
+        # 嘗試解析合約 (使用簡易版邏輯，或與 Executor 共用)
+        # 這裡我們直接用與 RealExecutor 類似的邏輯找合約
+        try:
+            # 1. 簡易解析: TMF202603 -> TMFC6
+            code = self._resolve_code(self.target_code)
+            self.contract = self.api.Contracts.Futures.TMF[code]
+            print(f"📄 [Feeder] 鎖定行情合約: {self.contract.name} ({self.contract.code})")
+        except Exception as e:
+            print(f"❌ [Feeder] 找不到合約 {self.target_code}: {e}")
+
+    def subscribe(self, symbol=None):
+        """開始訂閱"""
+        if not self.contract:
+            print("❌ [Feeder] 無合約物件，無法訂閱")
             return
 
-        # 2. 篩選邏輯 (更穩健的版本)
-        # 我們不要限制長度，改為排除「跨月價差單」
-        # 通常一般合約的 delivery_month 會有值，且 code 不會包含複雜的價差標記
-        normal_contracts = []
-        for c in contracts:
-            # 排除選擇權或非目標商品 (雖然 Futures[cat] 應該很乾淨，但檢查一下)
-            if not c.code.startswith(target_category): continue
-            
-            # 排除價差單 (Spread): 通常 delivery_month 會有特殊的標記，或者我們只取 code 單純的
-            # 最簡單的方法：只取 delivery_month 是數字的 (例如 '202603')
-            if c.delivery_month and c.delivery_month.isdigit():
-                normal_contracts.append(c)
-
-        if not normal_contracts:
-            print(f"❌ 篩選後無合約 (原始數量: {len(contracts)})")
-            return
-
-        # 3. 排序並取最近月 (Front Month)
-        # 依照交割月排序 (例如 '202603' < '202604')
-        sorted_contracts = sorted(normal_contracts, key=lambda x: x.delivery_month)
-        target = sorted_contracts[0]
-        
-        self.target_code = target.code
-        print(f"🎯 鎖定合約: {target.name} ({self.target_code}) 交割月: {target.delivery_month}")
-        
-        # 4. 訂閱
-        self.api.quote.subscribe(target, quote_type=sj.constant.QuoteType.Tick, version=sj.constant.QuoteVersion.v1)
-        print(f"✅ 已送出訂閱請求")
+        print(f"📡 [Feeder] 訂閱即時報價 (L1): {self.contract.code}")
+        try:
+            self.api.quote.subscribe(
+                self.contract, 
+                quote_type=sj.constant.QuoteType.Tick,
+                version=sj.constant.QuoteVersion.v1
+            )
+        except Exception as e:
+            print(f"❌ [Feeder] 訂閱失敗: {e}")
 
     def start(self):
-        print("🚀 [Shioaji] 實盤監聽中... (按 Ctrl+C 停止)")
+        """啟動 (對於 Shioaji 來說，subscribe 後就開始了，這裡只是佔位符)"""
         pass
 
     def stop(self):
-        self.api.logout()
-        print("👋 斷線")
+        """停止"""
+        if self.contract:
+            print(f"🔕 [Feeder] 取消訂閱: {self.contract.code}")
+            try:
+                self.api.quote.unsubscribe(self.contract, quote_type=sj.constant.QuoteType.Tick)
+            except:
+                pass
 
-    def _on_tick_received(self, exchange, tick):
-        """處理 Shioaji 傳回來的 Tick"""
-        # 注意: 如果訂閱到非即時行情，Shioaji 有時回傳的 tick.close 會是 int 或 decimal
-        event = TickEvent(
-            symbol=self.target_code,
-            price=float(tick.close),
-            volume=int(tick.volume),
-            timestamp=datetime.now(),
-            simulated=False
-        )
-        
-        if self.on_tick_callback:
-            self.on_tick_callback(event)
+    def _on_tick_arrived(self, exchange, tick):
+        """
+        Shioaji 回傳的原始 Tick 處理
+        """
+        # 確保有 callback 對象
+        if not self.on_tick_callback:
+            return
+
+        # 過濾商品 (只處理我們訂閱的)
+        if self.contract and tick.code != self.contract.code:
+            return
+
+        # 轉換資料格式 (Raw -> Standard Dict)
+        # Shioaji Tick 結構: {close, volume, datetime...}
+        try:
+            # 注意: tick.close 可能是 Decimal
+            price = float(tick.close)
+            qty = int(tick.volume)
+            
+            # 時間處理 (tick.datetime 是 datetime 物件)
+            tick_time = tick.datetime
+            
+            # 包裝成簡單的 Dict 傳給 Aggregator
+            tick_data = {
+                'datetime': tick_time,
+                'price': price,
+                'volume': qty,
+                'bid': float(tick.bid_price) if hasattr(tick, 'bid_price') else price, # 選填
+                'ask': float(tick.ask_price) if hasattr(tick, 'ask_price') else price  # 選填
+            }
+            
+            # 送出
+            self.on_tick_callback(tick_data)
+            
+        except Exception as e:
+            # 避免因為一個壞 tick 導致程式崩潰，印出錯誤但不中斷
+            # print(f"⚠️ [Feeder] Tick 解析錯誤: {e}")
+            pass
+
+    def _resolve_code(self, target_str):
+        """簡易合約代碼轉換 (與 Executor 邏輯一致)"""
+        try:
+            if len(target_str) < 9: return target_str
+            symbol = target_str[:3]
+            year_str = target_str[3:7]
+            month_str = target_str[7:]
+            month_map = {"01":"A", "02":"B", "03":"C", "04":"D", "05":"E", "06":"F", "07":"G", "08":"H", "09":"I", "10":"J", "11":"K", "12":"L"}
+            month_code = month_map.get(month_str)
+            year_code = year_str[-1]
+            return f"{symbol}{month_code}{year_code}"
+        except: return target_str

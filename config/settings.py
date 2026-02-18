@@ -6,9 +6,9 @@ load_dotenv()
 
 class Settings:
     # --- 帳戶與 API 設定 ---
-    API_KEY = os.getenv("SHIOAJI_API_KEY")
-    API_SECRET = os.getenv("SHIOAJI_SECRET_KEY")
-    ACC_ID = os.getenv("SHIOAJI_ACC_ID")  # 帳號 ID (身分證字號或子帳號)
+    SHIOAJI_API_KEY = os.getenv("SHIOAJI_API_KEY")
+    SHIOAJI_SECRET_KEY = os.getenv("SHIOAJI_SECRET_KEY")
+    SHIOAJI_ACC_ID = os.getenv("SHIOAJI_ACC_ID")  # 帳號 ID (身分證字號或子帳號)
     
     _cert_path = os.getenv("SHIOAJI_CERT_PATH")
     
@@ -50,12 +50,12 @@ class Settings:
     LOG_LEVEL = "INFO"
     TIMEZONE = "Asia/Taipei"
 
-    DRY_RUN=True
+    DRY_RUN=False
 
     # 檢查必要設定是否存在
     @classmethod
     def validate(cls):
-        required_vars = ["API_KEY", "API_SECRET", "TELEGRAM_TOKEN"]
+        required_vars = ["SHIOAJI_API_KEY", "SHIOAJI_SECRET_KEY", "TELEGRAM_TOKEN"]
         missing = [var for var in required_vars if not getattr(cls, var)]
         if missing:
             raise ValueError(f"缺少必要環境變數: {', '.join(missing)}")
