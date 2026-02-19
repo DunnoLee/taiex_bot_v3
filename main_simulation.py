@@ -4,7 +4,7 @@ from core.engine import BotEngine
 from modules.ma_strategy import MAStrategy
 from config.settings import Settings
 from modules.real_executor import RealExecutor
-
+import sys
 def main():
     my_strategy = MAStrategy(
         fast_window=30, 
@@ -30,7 +30,12 @@ def main():
     # bot.load_warmup_data() 
     
     # 4. 出發
+    print("\n🟢 [系統] 模擬引擎啟動，按 Ctrl+C 停止...")
     bot.start()
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n🛑 模擬結束")
+        sys.exit(0)

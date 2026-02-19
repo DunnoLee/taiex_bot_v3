@@ -1,18 +1,17 @@
 import shioaji as sj
 from config.settings import Settings
-import datetime
+from datetime import datetime, timedelta
+import pandas as pd
 
 class ShioajiFeeder:
     """
-    Shioaji 行情餵食機 (V3.5)
-    負責:
-    1. 接收已經連線的 API 物件
-    2. 訂閱目標合約 (Target Contract)
-    3. 接收即時 Tick -> 轉換格式 -> 傳給 Aggregator
+    Shioaji 行情餵食機 V4.0 (含回補功能)
+    新增: fetch_kbars 用於補齊歷史斷層數據
     """
     def __init__(self, api: sj.Shioaji):
         self.api = api
         self.on_tick_callback = None
+        self.on_bar_callback = None # 雖然主要餵 Tick，但預留 Bar 介面
         self.target_code = getattr(Settings, "TARGET_CONTRACT", "TMF202603")
         self.contract = None
         
@@ -22,6 +21,9 @@ class ShioajiFeeder:
     def set_on_tick(self, callback):
         """設定 Tick 接收者 (通常是 Aggregator)"""
         self.on_tick_callback = callback
+
+    def set_on_bar(self, callback):
+        self.on_bar_callback = callback
 
     def connect(self):
         """
@@ -40,6 +42,55 @@ class ShioajiFeeder:
         except Exception as e:
             print(f"❌ [Feeder] 找不到合約 {self.target_code}: {e}")
 
+    def fetch_kbars(self, start_date: str) -> list:
+        """
+        [新增功能] 從 API 抓取歷史/近期 K 棒 (1分K)
+        :param start_date: 字串格式 'YYYY-MM-DD'
+        :return: list of dict [{'datetime':..., 'close':...}, ...]
+        """
+        if not self.contract:
+            print("❌ [Feeder] 無合約物件，無法抓取 K 棒")
+            return []
+
+        print(f"🔄 [Feeder] 正在向永豐 API 請求 K 棒 (Start: {start_date})...")
+        
+        try:
+            # 呼叫 Shioaji kbars API
+            kbars = self.api.kbars(
+                contract=self.contract, 
+                start=start_date, 
+                end=datetime.now().strftime("%Y-%m-%d") # 抓到今天
+            )
+            
+            # 轉成 DataFrame
+            df = pd.DataFrame({**kbars})
+            if df.empty:
+                print("⚠️ [Feeder] API 回傳無資料")
+                return []
+
+            # 轉換時間欄位 (ts 是奈秒 timestamp)
+            df.ts = pd.to_datetime(df.ts)
+            
+            # 轉換欄位名稱以符合 BarEvent 標準
+            df.rename(columns={
+                'ts': 'datetime', 
+                'Open': 'open', 
+                'High': 'high', 
+                'Low': 'low', 
+                'Close': 'close', 
+                'Volume': 'volume'
+            }, inplace=True)
+
+            # 轉成 list of dict
+            result_list = df.to_dict('records')
+            print(f"✅ [Feeder] 成功取得 {len(result_list)} 根 K 棒")
+            
+            return result_list
+
+        except Exception as e:
+            print(f"❌ [Feeder] 抓取 K 棒失敗: {e}")
+            return []
+        
     def subscribe(self, symbol=None):
         """開始訂閱"""
         if not self.contract:

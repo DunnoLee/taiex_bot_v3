@@ -1,101 +1,112 @@
-import time
 import pandas as pd
-from datetime import datetime
-from typing import Callable, Optional
-from core.data_feeder import DataFeeder
-from core.event import TickEvent, BarEvent, EventType
-from config.settings import Settings
+import time
+import threading
+from core.event import BarEvent, EventType
 
-class CsvHistoryFeeder(DataFeeder):
+class CsvHistoryFeeder:
     """
-    讀取歷史 CSV 檔案 (K-Bar 格式)，模擬行情推送。
-    支援格式: Time, Open, High, Low, Close, Volume, Amount
+    CsvHistoryFeeder (模擬行情餵食機) - V3.91 Event Fix
+    
+    修正:
+    1. BarEvent 實例化移除 'event_type' 參數 (由類別內部自動處理)。
+    2. 維持 threading 背景執行。
     """
-    def __init__(self, file_path: str, speed: float = 0.01):
-        super().__init__()
+    def __init__(self, file_path, speed=0.5):
         self.file_path = file_path
-        self.speed = speed  # 播放間隔 (秒)，越小越快
-        self.running = False
+        self.speed = speed
         self.df = None
+        self.running = False
+        self.target_code = "TMF_SIM"
+        
+        self.on_bar_callback = None
+        self.on_tick_callback = None 
 
     def connect(self):
-        print(f"📂 [Mock] 正在讀取歷史 K 線檔案: {self.file_path}...")
+        print(f"🔌 [Sim] 正在讀取歷史資料: {self.file_path}...")
         try:
-            # 讀取 CSV
             self.df = pd.read_csv(self.file_path)
+            self.df.columns = self.df.columns.str.strip() # 去除空白
             
-            # 處理時間欄位: 你的 CSV 只有 'Time' 欄位，包含日期與時間
-            if 'Time' in self.df.columns:
-                self.df['Datetime'] = pd.to_datetime(self.df['Time'])
+            # 欄位映射
+            rename_map = {
+                'Time': 'datetime', 'time': 'datetime', 'Date': 'datetime',
+                'Open': 'open',     'open': 'open',
+                'High': 'high',     'high': 'high',
+                'Low': 'low',       'low': 'low',
+                'Close': 'close',   'close': 'close',
+                'Volume': 'volume', 'volume': 'volume', 'Vol': 'volume'
+            }
+            self.df.rename(columns=rename_map, inplace=True)
+            
+            if 'datetime' in self.df.columns:
+                self.df['datetime'] = pd.to_datetime(self.df['datetime'])
+                self.df.sort_values('datetime', inplace=True)
+                self.df.reset_index(drop=True, inplace=True)
+                print(f"✅ [Sim] 資料載入成功，共 {len(self.df)} 筆")
             else:
-                print("❌ CSV 格式錯誤: 找不到 'Time' 欄位")
-                return
-
-            # 確保按照時間排序
-            self.df = self.df.sort_values('Datetime').reset_index(drop=True)
-            
-            print(f"✅ 讀取完成，共 {len(self.df)} 根 K 棒。")
-            print(f"📅 資料範圍: {self.df['Datetime'].iloc[0]} -> {self.df['Datetime'].iloc[-1]}")
+                print(f"❌ [Sim] CSV 缺少時間欄位")
+                self.df = pd.DataFrame()
             
         except Exception as e:
-            print(f"❌ 讀取失敗: {e}")
+            print(f"❌ [Sim] 讀取 CSV 失敗: {e}")
+            self.df = pd.DataFrame()
 
-    def subscribe(self, symbol: str):
-        # Mock 模式下，這只是個形式，實際上是看 CSV 裡有什麼
+    def subscribe(self, symbol):
+        self.target_code = symbol
+        print(f"📡 [Sim] 模擬訂閱: {symbol}")
+
+    def set_on_tick(self, callback):
         pass
 
+    def set_on_bar(self, callback):
+        self.on_bar_callback = callback
+
     def start(self):
-        if self.df is None:
-            print("❌ 無資料可播放，請先執行 connect()")
+        if self.df is None or self.df.empty:
+            print("⚠️ [Sim] 無資料可回放")
             return
 
         self.running = True
-        print(f"▶️ [Mock] 開始回放 K 棒資料...")
-
-        # 使用 iterrows 逐行讀取 (雖然慢但最接近模擬行為)
-        for index, row in self.df.iterrows():
-            if not self.running: break
-
-            current_time = row['Datetime']
-            close_price = float(row['Close'])
-
-            # 1. 建立 BarEvent (這是主角)
-            bar_event = BarEvent(
-                symbol=Settings.SYMBOL_CODE,
-                period="1m", # 假設你的 CSV 是 1 分 K
-                open=float(row['Open']),
-                high=float(row['High']),
-                low=float(row['Low']),
-                close=close_price,
-                volume=int(row['Volume']),
-                timestamp=current_time
-            )
-
-            # 2. 建立偽造的 TickEvent (配角)
-            # 有些策略可能依賴 Tick 更新，我們用 K 棒的收盤價 "偽裝" 成一個 Tick
-            tick_event = TickEvent(
-                symbol=Settings.SYMBOL_CODE,
-                price=close_price,
-                volume=int(row['Volume']),
-                bid_price=close_price,
-                ask_price=close_price,
-                timestamp=current_time,
-                simulated=True
-            )
-
-            # 3. 推送事件 (先推 Tick，再推 Bar，模擬真實順序)
-            if self.on_tick_callback:
-                self.on_tick_callback(tick_event)
-            
-            if self.on_bar_callback:
-                self.on_bar_callback(bar_event)
-
-            # 4. 控制播放速度
-            if self.speed > 0:
-                time.sleep(self.speed)
-
-        self.running = False
-        print("🏁 [Mock] 回放結束")
+        print(f"▶️ [Sim] 開始回放 (速度: {self.speed}s/bar)...")
+        
+        t = threading.Thread(target=self._run_loop)
+        t.daemon = True 
+        t.start()
 
     def stop(self):
+        self.running = False
+        print("🛑 [Sim] 停止回放")
+
+    def _run_loop(self):
+        """背景回放迴圈"""
+        for index, row in self.df.iterrows():
+            if not self.running: break
+            
+            # 修正點：移除 event_type 參數
+            # 假設 BarEvent 的定義是 (symbol, timestamp, open, high, low, close, volume)
+            # 如果還有其他參數 (如 open_interest)，請依據 core/event.py 補上
+            try:
+                bar = BarEvent(
+                    symbol=self.target_code,
+                    timestamp=row['datetime'],
+                    open=row['open'],
+                    high=row['high'],
+                    low=row['low'],
+                    close=row['close'],
+                    volume=row['volume']
+                )
+                
+                if self.on_bar_callback:
+                    # 這裡可以簡單印出時間，確認有在跑
+                    # print(f"⏳ [Sim] {bar.timestamp} C:{int(bar.close)}")
+                    self.on_bar_callback(bar)
+            
+            except TypeError as e:
+                print(f"❌ [Sim] BarEvent 參數錯誤: {e}")
+                self.running = False
+                break
+            
+            time.sleep(self.speed)
+            
+        print("\n🏁 [Sim] 回放結束")
         self.running = False

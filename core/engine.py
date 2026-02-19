@@ -8,6 +8,7 @@ from core.event import BarEvent, SignalEvent, SignalType, EventType
 #from modules.ma_strategy import MAStrategy
 from modules.commander import TelegramCommander
 from core.recorder import TradeRecorder
+import pandas as pd
 
 class BotEngine:
     """
@@ -305,7 +306,18 @@ class BotEngine:
         )
 
     def _bind_events(self):
-        self.feeder.set_on_tick(self.aggregator.on_tick)
+        """綁定事件流 (Data Pipeline)"""
+        
+        # 情境 A: Feeder 是餵 Tick 的 (如 ShioajiFeeder)
+        if hasattr(self.feeder, 'set_on_tick'):
+            self.feeder.set_on_tick(self.aggregator.on_tick)
+        
+        # 情境 B: Feeder 是餵 Bar 的 (如 MockFeeder)
+        # 我們直接把 Engine 的 on_bar_generated 綁給它
+        if hasattr(self.feeder, 'set_on_bar'):
+            self.feeder.set_on_bar(self.on_bar_generated)
+            
+        # Aggregator 產生的 Bar 也要綁定
         self.aggregator.set_on_bar(self.on_bar_generated)
 
     def load_warmup_data(self, csv_path="data/history/TMF_History.csv"):
@@ -350,6 +362,175 @@ class BotEngine:
                 )
                 self.commander.send_message(f"⚡️ **自動成交**\n{trade_msg}\n原因: {signal.reason}")
 
+    def sync_warmup_data_from_api(self):
+        """
+        [雙軌數據核心]
+        檢查策略目前的資料進度，並從 API 抓取缺少的「溫數據 (Warm Data)」。
+        """
+        # 1. 只有 ShioajiFeeder 才有能力抓 API，MockFeeder 做不到
+        if not hasattr(self.feeder, 'fetch_kbars'):
+            print("⚠️ [Engine]目前的 Feeder 不支援 API 回補，跳過。")
+            return
+
+        # 2. 決定要從哪一天開始抓
+        start_date = datetime.datetime.now().strftime("%Y-%m-%d") # 預設抓今天
+        
+        # 如果策略已經有載入 CSV 歷史資料，我們就從「最後一筆資料的日期」開始抓
+        if self.strategy.raw_bars:
+            last_bar = self.strategy.raw_bars[-1]
+            
+            # 判斷是 dict 還是物件 (相容性處理)
+            if isinstance(last_bar, dict):
+                last_dt = pd.to_datetime(last_bar['datetime'])
+            else:
+                last_dt = pd.to_datetime(last_bar.timestamp)
+                
+            start_date = last_dt.strftime("%Y-%m-%d")
+            print(f"📅 [Engine] 偵測到歷史資料，將從 {start_date} 開始回補...")
+        else:
+            # 如果完全沒資料，預設抓最近 3 天
+            print("📅 [Engine] 無歷史資料，預設回補最近 3 天...")
+            start_dt = datetime.datetime.now() - datetime.timedelta(days=3)
+            start_date = start_dt.strftime("%Y-%m-%d")
+
+        # 3. 執行回補
+        print("🚀 [Engine] 啟動雙軌數據對接 (API Backfill)...")
+        recent_bars = self.feeder.fetch_kbars(start_date)
+        
+        if recent_bars:
+            # 4. 將資料倒進策略 (策略會自己處理重複資料)
+            # 注意: 這裡假設 strategy.load_history_bars 已經支援 append 模式
+            # 如果它是覆蓋模式，我們可能需要先合併。
+            # 但我們目前的 BaseStrategy.load_history_bars 是 append 嗎？
+            # 檢查後發現 BaseStrategy 是 self.raw_bars = bars (覆蓋)
+            # 所以我們要先拿出舊的，合併後再塞回去，或者直接呼叫策略的 update
+            
+            # 這裡我們用比較安全的方式：直接呼叫 load_history_bars，讓策略自己處理
+            # 但為了避免 CSV 資料被洗掉，我們應該把新資料 append 進去
+            
+            # 修正策略：我們直接把新資料 append 到 strategy.raw_bars
+            # (因為 BaseStrategy/MAStrategy 的 raw_bars 是 deque 或 list)
+            
+            count = 0
+            # 取得目前策略最後的時間，用來過濾重複
+            last_strategy_time = None
+            if self.strategy.raw_bars:
+                 last_item = self.strategy.raw_bars[-1]
+                 # 確保轉成 pandas timestamp 以便比對
+                 if isinstance(last_item, dict):
+                     last_strategy_time = pd.to_datetime(last_item['datetime'])
+                 else:
+                     last_strategy_time = pd.to_datetime(last_item.timestamp)
+
+            print(f"🧐 [Debug] CSV 最後時間: {last_strategy_time}")
+            if recent_bars:
+                first_api_time = pd.to_datetime(recent_bars[0]['datetime'])
+                last_api_time = pd.to_datetime(recent_bars[-1]['datetime'])
+                print(f"🧐 [Debug] API 資料範圍: {first_api_time} ~ {last_api_time}")
+
+            # --- 開始比對與接合 ---
+            for bar in recent_bars:
+                bar_time = pd.to_datetime(bar['datetime']) # 確保也是 Timestamp
+                
+                # 嚴格過濾：必須比 CSV 最後時間「大」才收
+                if last_strategy_time and bar_time <= last_strategy_time:
+                    continue
+                
+                # 轉成策略需要的格式 (dict) 並 append
+                self.strategy.raw_bars.append({
+                    'datetime': bar['datetime'],
+                    'close': bar['close'],
+                    # 視需要補上 open/high/low/volume
+                    'open': bar['open'],
+                    'high': bar['high'],
+                    'low': bar['low'],
+                    'volume': bar['volume']
+                })
+                count += 1
+            
+            print(f"🔗 [Engine] 雙軌對接完成！成功接合 {count} 根 K 棒。")
+        #     # --- 🛡️ 資料連續性檢查 (Gap Detection) ---
+        #     if count > 0 and last_strategy_time:
+        #         # 取得剛接上的第一根新資料時間
+        #         # 注意：這裡要從 recent_bars 裡找第一根被 accept 的
+        #         # 為了簡化，我們直接比較 CSV最後一根 vs API第一根(如果它比CSV新的話)
+                
+        #         # 比較簡單的做法：檢查 CSV 最後時間 與 當下時間 的差距
+        #         # 如果補完資料後，最新的資料時間距離現在超過 X 分鐘，代表有問題
+                
+        #         new_last_bar = self.strategy.raw_bars[-1]
+        #         new_last_time = pd.to_datetime(new_last_bar['datetime'] if isinstance(new_last_bar, dict) else new_last_bar.timestamp)
+        #         now = datetime.datetime.now()
+                
+        #         # 計算落後多久
+        #         lag = now - new_last_time
+                
+        #         # 如果是盤中 (08:45~13:45)，且落後超過 5 分鐘
+        #         is_trading_hours = (8 <= now.hour <= 13) 
+        #         if is_trading_hours and lag.total_seconds() > 300: # 5分鐘
+        #             warning_msg = f"⚠️ [嚴重警告] 資料可能有斷層！\n最新資料時間: {new_last_time}\n目前系統時間: {now}\n落後: {lag}"
+        #             print(warning_msg)
+        #             self.commander.send_message(warning_msg)
+        #         else:
+        #             print(f"✅ [Engine] 資料連續性檢查通過 (Lag: {lag})")
+
+        #     self.commander.send_message(f"🔗 **數據對接完成**\n補回 {count} 根 K 棒 (Warm Data)")
+        # else:
+        #     print("⚠️ [Engine] 無新資料需回補 (可能已是最新)")
+
+            # ==========================================
+            # 🛡️ 新增：資料新鮮度防呆檢查 (Data Freshness Check)
+            # ==========================================
+            if self.strategy.raw_bars:
+                # 1. 取得目前策略記憶體中「最新」的那根 K 棒時間
+                last_bar = self.strategy.raw_bars[-1]
+                
+                # 兼容性處理 (dict vs object)
+                if isinstance(last_bar, dict):
+                    last_bar_time = pd.to_datetime(last_bar['datetime'])
+                else:
+                    last_bar_time = pd.to_datetime(last_bar.timestamp)
+                
+                # 2. 計算落後時間 (Lag)
+                now = datetime.datetime.now()
+                lag = now - last_bar_time
+                
+                # 3. 判斷嚴重程度
+                # 假設: 如果落後超過 24 小時，通常代表是假日，或者資料嚴重脫節
+                msg_header = ""
+                should_warn = False
+                
+                # 情況 A: 盤中 (08:45 ~ 13:45) 且落後超過 10 分鐘 -> 紅色警報
+                is_day_trading = (8 <= now.hour <= 13)
+                if is_day_trading and lag.total_seconds() > 600: # 10分鐘
+                    msg_header = "🔴 **[嚴重警報] 資料嚴重滯後！**"
+                    should_warn = True
+                
+                # 情況 B: 非盤中，但落後超過 5 天 (可能忘記跑 Downloader) -> 黃色警報
+                elif lag.days > 5:
+                    msg_header = "🟡 **[提醒] 歷史資料過舊**"
+                    should_warn = True
+
+                # 4. 發送警告
+                if should_warn:
+                    warning_msg = (
+                        f"{msg_header}\n"
+                        f"------------------\n"
+                        f"最後資料: {last_bar_time.strftime('%Y-%m-%d %H:%M')}\n"
+                        f"系統時間: {now.strftime('%Y-%m-%d %H:%M')}\n"
+                        f"資料落後: {lag}\n"
+                        f"------------------\n"
+                        f"💡 建議: 請檢查是否為休市期間，或執行 universal_downloader 更新 CSV。"
+                    )
+                    print(warning_msg)
+                    if self.enable_telegram:
+                        self.commander.send_message(warning_msg)
+                else:
+                    print(f"✅ [Engine] 資料新鮮度檢查通過 (Lag: {lag})")
+            
+            else:
+                 print("⚠️ [Engine] 策略內無任何 K 棒資料！")
+
     def start(self):
         print(f"🚀 Engine Started: {self.symbol}")
         self.commander.start_listening()
@@ -360,6 +541,13 @@ class BotEngine:
         
         try:
             self.feeder.connect()
+
+            # 👇👇👇 在這裡插入回補邏輯 👇👇👇
+            # 先讀 CSV (Cold)，再讀 API (Warm)
+            # load_warmup_data 應該在 main_live.py 呼叫過了
+            self.sync_warmup_data_from_api() 
+            # 👆👆👆 插入結束 👆👆👆
+
             if hasattr(self.feeder, 'subscribe'):
                 self.feeder.subscribe(self.symbol)
             
