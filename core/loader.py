@@ -1,7 +1,7 @@
 import pandas as pd
 import os
 
-def load_history_data(file_path: str, tail_count: int = 3000) -> list:
+def load_history_data(file_path: str, tail_count: int = 15000) -> list:
     """
     通用歷史資料讀取器 (V3.9 相容升級版)
     功能: 讀取 Shioaji 格式 CSV，並回傳標準化的 K 棒列表

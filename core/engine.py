@@ -98,7 +98,13 @@ class BotEngine:
                     report += f"❌ API 查詢失敗: {e}\n"
 
             report += f"------------------\n"
-            report += f"MA({self.strategy.fast_window}/{self.strategy.slow_window}) | SL:{self.strategy.stop_loss}"
+
+            strategy_info = getattr(self.strategy, 'name', 'Unknown Strategy')
+            # 如果你想順便印停損，可以用 getattr 安全地拿 (沒有就回傳 N/A)
+            sl_info = getattr(self.strategy, 'stop_loss', 'N/A')
+            msg = f"🚀 \n策略: {strategy_info} | SL:{sl_info}"
+            
+            report += msg #f"MA({self.strategy.fast_window}/{self.strategy.slow_window}) | SL:{self.strategy.stop_loss}"
             return report
 
         def get_balance():
@@ -534,9 +540,16 @@ class BotEngine:
     def start(self):
         print(f"🚀 Engine Started: {self.symbol}")
         self.commander.start_listening()
+        strategy_info = getattr(self.strategy, 'name', 'Unknown Strategy')
+    
+        # 如果你想順便印停損，可以用 getattr 安全地拿 (沒有就回傳 N/A)
+        sl_info = getattr(self.strategy, 'stop_loss', 'N/A')
+        
+        msg = f"🚀 引擎啟動\n策略: {strategy_info} | SL:{sl_info}"
+
         self.commander.send_startup_report(
-            self.symbol, 
-            f"MA({self.strategy.fast_window}/{self.strategy.slow_window}) SL:{self.strategy.stop_loss}"
+            self.symbol,msg
+            #f"MA({self.strategy.fast_window}/{self.strategy.slow_window}) SL:{self.strategy.stop_loss}"
         )
         
         try:
