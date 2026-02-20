@@ -568,8 +568,71 @@ class BotEngine:
             
             while self.system_running:
                 time.sleep(1)
+                # 👈 新增這段檢查邏輯
+                # 檢查 feeder 是否有 running 屬性，如果有且變成 False，代表回放結束了
+                if hasattr(self.feeder, 'running') and not self.feeder.running:
+                    print("\n🏁 [Engine] 偵測到歷史資料回放完畢，自動退出主迴圈！")
+                    break
                     
         except KeyboardInterrupt:
             print("\n🛑 手動中斷")
             self.commander.send_message("🛑 **系統已手動中斷**")
             self.feeder.stop()
+
+    def inject_flatten_signal(self, reason: str = "強制平倉"):
+        """
+        [外部按鈕] 允許外部腳本手動注入一個平倉訊號，並走正規管線處理。
+        專門用於回測期末結算，或 Telegram 的緊急平倉按鈕。
+        """
+        if self.strategy.position == 0:
+            return # 沒部位就不動作
+
+        # 1. 取得最後一筆價格與時間 (從大腦拿)
+        if not self.strategy.raw_bars:
+            return
+            
+        last_bar = self.strategy.raw_bars[-1]
+        last_price = float(last_bar['close'] if isinstance(last_bar, dict) else last_bar.close)
+        last_time = last_bar['datetime'] if isinstance(last_bar, dict) else getattr(last_bar, 'timestamp', None)
+        
+        # 紀錄平倉前的狀態 (算損益與寫 Log 用)
+        qty_to_close = abs(self.strategy.position)
+        pnl_before = self.executor.total_pnl
+
+        # 2. 建立正規的 SignalEvent
+        from core.event import SignalEvent, SignalType, EventType
+        signal = SignalEvent(
+            type=EventType.SIGNAL,
+            symbol=self.symbol,
+            signal_type=SignalType.FLATTEN,
+            reason=reason,
+            timestamp=last_time
+        )
+
+        # 3. 走正規管線：叫會計師 (Executor) 算錢
+        print(f"⚙️ [Engine] 收到外部強制平倉指令: {reason}")
+        if self.executor:
+            try:
+                self.executor.process_signal(signal, last_price)
+            except AttributeError:
+                self.executor.execute_signal(signal, last_price)
+                
+        # 計算這筆結算產生的實現損益
+        pnl_after = getattr(self.executor, 'total_pnl', pnl_before)
+        realized_pnl = pnl_after - pnl_before
+
+        # 4. 走正規管線：叫書記官 (Recorder) 寫 CSV
+        if self.recorder:
+            self.recorder.write_trade(
+                timestamp=last_time,
+                symbol=self.symbol,
+                action="FLATTEN",
+                price=last_price,
+                qty=qty_to_close,
+                strategy_name=getattr(self.strategy, 'name', 'Engine-Inject'),
+                pnl=realized_pnl,
+                msg=reason
+            )
+            
+        # 同步策略的部位狀態歸零
+        self.strategy.set_position(0)

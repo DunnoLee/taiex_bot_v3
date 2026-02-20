@@ -4,7 +4,7 @@ import pandas as pd
 from itertools import product
 from config.settings import Settings
 from modules.mock_feeder import CsvHistoryFeeder
-from modules.ma_strategy import MAStrategy
+from strategies.ma_strategy import MAStrategy
 from modules.mock_executor import MockExecutor
 from core.event import BarEvent
 

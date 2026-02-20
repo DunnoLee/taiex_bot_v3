@@ -5,11 +5,11 @@ from modules.mock_feeder import CsvHistoryFeeder
 from modules.mock_executor import MockExecutor
 from core.engine import BotEngine
 from core.recorder import TradeRecorder
-from modules.ma_strategy import MAStrategy
-from modules.rsi_strategy import RsiStrategy
-from modules.rsi_trend_strategy import RsiTrendStrategy
-from modules.ma_adx_strategy import MaAdxStrategy
-from modules.smart_hold_strategy import SmartHoldStrategy
+from strategies.ma_strategy import MAStrategy
+from strategies.rsi_strategy import RsiStrategy
+from strategies.rsi_trend_strategy import RsiTrendStrategy
+from strategies.ma_adx_strategy import MaAdxStrategy
+from strategies.smart_hold_strategy import SmartHoldStrategy
 
 # --- 設定 ---
 HISTORY_FILE = "data/history/TMF_History.csv"
@@ -26,6 +26,7 @@ def main():
     #     threshold=5.0,
     #     resample=5
     # )
+
     # RSI 參數：14根K棒(5分K)、高於70做空、低於30做多、停損200點
     # my_strategy = RsiStrategy(
     #     rsi_period=14, 
@@ -34,6 +35,7 @@ def main():
     #     resample=5,
     #     stop_loss=200.0
     # )
+
     # my_strategy = RsiTrendStrategy(
     # ma_period=240,     # 判斷趨勢用的長均線
     # rsi_period=14,     # RSI 週期
@@ -42,18 +44,20 @@ def main():
     # resample=5,        # 5分K
     # stop_loss=200.0    # 停損 200 點
     # )
+
     # 參數設定：MA(30/240)，並加上 ADX > 25 才能進場的限制
-    # my_strategy = MaAdxStrategy(
-    #     fast_window=30, 
-    #     slow_window=240, 
-    #     adx_period=14, 
-    #     adx_threshold=25,   # ADX 超過 25 才算有趨勢
-    #     filter_point=5.0, 
-    #     resample=5, 
-    #     stop_loss=300.0
-    # )
+    my_strategy = MaAdxStrategy(
+        fast_window=30, 
+        slow_window=240, 
+        adx_period=14, 
+        adx_threshold=25,   # ADX 超過 25 才算有趨勢
+        filter_point=5.0, 
+        resample=5, 
+        stop_loss=300.0
+    )
+
     # 20日均線(月線) 作為牛熊分水嶺，停損設大一點(例如800點)避免日內洗盤
-    my_strategy = SmartHoldStrategy(daily_ma_period=20, stop_loss=800.0)
+    #my_strategy = SmartHoldStrategy(daily_ma_period=20, stop_loss=800.0)
 
     print(f"🧠 [策略] 載入模組: {my_strategy.name}")
 
@@ -90,34 +94,10 @@ def main():
     print("🏁 [Sim] 回放結束")
 
     # ==========================================
-    # 🛠️ 新增：期末強制結算 (Mark-to-Market)
+    # 🛠️ 新增：呼叫 Engine 的正規管線進行期末結算
     # ==========================================
-    if bot.strategy.position != 0:
-        print("🔔 [回測結算] 偵測到期末有未平倉部位，執行強制平倉結算...")
-        
-        # 1. 取得最後一根 K 棒的價格
-        last_bar = bot.strategy.raw_bars[-1]
-        last_price = last_bar['close'] if isinstance(last_bar, dict) else last_bar.close
-        
-        # 2. 建立強制平倉訊號 (注意參數是用 type)
-        from core.event import SignalEvent, SignalType, EventType
-        final_signal = SignalEvent(
-            type=EventType.SIGNAL,
-            symbol=bot.symbol,
-            signal_type=SignalType.FLATTEN,
-            reason="期末強制結算 (Mark-to-Market)"
-        )
-        
-        # 3. 讓 Executor 執行這筆虛擬訂單，把利潤算進去
-        try:
-            bot.executor.execute_signal(final_signal, last_price)
-        except AttributeError:
-            try:
-                bot.executor.process_signal(final_signal, last_price)
-            except AttributeError:
-                print("⚠️ [警告] 找不到 MockExecutor 處理訊號的方法，請確認方法名稱！")
-        print(f"✅ [回測結算] 已用最後價格 {last_price} 強制平倉！")
-    # ==========================================
+    bot.inject_flatten_signal(reason="期末強制結算 (Mark-to-Market)")
+
 
     # 6. 顯示結果
     print("\n" + "="*40)

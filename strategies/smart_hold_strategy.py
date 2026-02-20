@@ -13,7 +13,7 @@ class SmartHoldStrategy(BaseStrategy):
     3. 收盤價 > 月線：做多持有 (Long)。
     4. 收盤價 < 月線：平倉空手 (Flatten)，絕不放空。
     """
-    def __init__(self, daily_ma_period=20, stop_loss=800.0, threshold=100.0):
+    def __init__(self, daily_ma_period=20, stop_loss=800.0, threshold=150.0):
         super().__init__(name=f"SmartHold(Daily MA{daily_ma_period}|T:{threshold})")
         self.daily_ma_period = daily_ma_period
         self.stop_loss = stop_loss 

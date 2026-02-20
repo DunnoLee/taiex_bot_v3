@@ -5,7 +5,7 @@ from config.settings import Settings
 from modules.real_executor import RealExecutor
 from modules.shioaji_feeder import ShioajiFeeder
 from core.engine import BotEngine
-from modules.ma_strategy import MAStrategy
+from strategies.ma_strategy import MAStrategy
 
 def main():
     my_strategy = MAStrategy(

@@ -1,7 +1,7 @@
 from modules.mock_feeder import CsvHistoryFeeder
 from modules.mock_executor import MockExecutor
 from core.engine import BotEngine
-from modules.ma_strategy import MAStrategy
+from strategies.ma_strategy import MAStrategy
 from config.settings import Settings
 from modules.real_executor import RealExecutor
 import sys

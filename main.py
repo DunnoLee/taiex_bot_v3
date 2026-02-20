@@ -2,7 +2,7 @@ import sys
 import os
 from config.settings import Settings
 from modules.mock_feeder import CsvHistoryFeeder
-from modules.ma_strategy import MAStrategy
+from strategies.ma_strategy import MAStrategy
 from modules.mock_executor import MockExecutor # 引入我們剛寫的執行器
 from core.event import BarEvent
 
