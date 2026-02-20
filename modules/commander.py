@@ -2,6 +2,7 @@ import requests
 import threading
 import time
 from config.settings import Settings
+import queue
 
 class TelegramCommander:
     """
@@ -31,6 +32,7 @@ class TelegramCommander:
         self.manual_trade_cb = None
         self.sync_position_cb = None
         self.flatten_cb = None  # <--- 新增這個
+
 
         if self.enabled:
             print("📡 [Commander] 雙向通訊模組 V3.2 (防殭屍版) 已就緒")

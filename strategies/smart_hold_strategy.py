@@ -13,13 +13,16 @@ class SmartHoldStrategy(BaseStrategy):
     3. 收盤價 > 月線：做多持有 (Long)。
     4. 收盤價 < 月線：平倉空手 (Flatten)，絕不放空。
     """
-    def __init__(self, daily_ma_period=20, stop_loss=800.0, threshold=150.0):
+    def __init__(self, daily_ma_period=20, stop_loss=800.0, threshold=100.0):
         super().__init__(name=f"SmartHold(Daily MA{daily_ma_period}|T:{threshold})")
         self.daily_ma_period = daily_ma_period
         self.stop_loss = stop_loss 
         self.threshold = threshold  # 新增：100點避震器
         self.raw_bars = deque(maxlen=10000)
         self.silent_mode = True
+        # 🚀 效能核彈：新增這兩個快取變數的初始化
+        self.current_date = None 
+        self.cached_ma = None
 
     def on_bar(self, bar: BarEvent) -> SignalEvent:
         # 1. 檢查硬停損 (防止單日極端黑天鵝)
@@ -37,18 +40,40 @@ class SmartHoldStrategy(BaseStrategy):
         if len(self.raw_bars) < required_bars:
             return None
 
-        # 4. 關鍵：Resample 成「日線 (1D)」
-        df = pd.DataFrame(self.raw_bars)
-        df.set_index('datetime', inplace=True)
-        # 用 'D' 聚合成日線，並取每日最後一筆收盤價
-        daily_close = df['close'].resample('1D').last().dropna()
+        # # 4. 關鍵：Resample 成「日線 (1D)」
+        # df = pd.DataFrame(self.raw_bars)
+        # df.set_index('datetime', inplace=True)
+        # # 用 'D' 聚合成日線，並取每日最後一筆收盤價
+        # daily_close = df['close'].resample('1D').last().dropna()
 
-        if len(daily_close) < self.daily_ma_period:
+        # if len(daily_close) < self.daily_ma_period:
+        #     return None
+
+        # # 5. 計算日均線 (例如 20日 月線)
+        # daily_ma = daily_close.rolling(window=self.daily_ma_period).mean().iloc[-1]
+        # current_price = bar.close
+
+        # 🚀 效能核彈：只在「換日」的時候，才去動用 Pandas 算日線！
+        bar_date = bar.timestamp.date()
+        
+        if self.current_date != bar_date:
+            self.current_date = bar_date # 更新日期
+            
+            # 只有換日才算這段極度耗時的 Pandas 邏輯
+            df = pd.DataFrame(self.raw_bars)
+            df.set_index('datetime', inplace=True)
+            daily_close = df['close'].resample('1D').last().dropna()
+            
+            if len(daily_close) >= self.daily_ma_period:
+                self.cached_ma = daily_close.rolling(window=self.daily_ma_period).mean().iloc[-1]
+
+        # 如果連一次都還沒算出來，就不動作
+        if self.cached_ma is None or np.isnan(self.cached_ma): 
             return None
 
-        # 5. 計算日均線 (例如 20日 月線)
-        daily_ma = daily_close.rolling(window=self.daily_ma_period).mean().iloc[-1]
+        # 接下來的進出場邏輯，全部改用 self.cached_ma 判斷！
         current_price = bar.close
+        daily_ma = self.cached_ma
 
         if np.isnan(daily_ma): return None
 

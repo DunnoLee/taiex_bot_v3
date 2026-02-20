@@ -14,13 +14,13 @@ class MAStrategy(BaseStrategy):
     2. V3.4 的 Resample 與 Deque 優化邏輯.
     3. Settings 自動參數讀取.
     """
-    def __init__(self, fast_window=None, slow_window=None, threshold=None, resample=None, stop_loss=None):
+    def __init__(self, fast_window=30, slow_window=240, threshold=5.0, resample=5, stop_loss=300):
         # 1. 處理參數預設值 (優先使用傳入參數，否則讀 Settings)
-        self.fast_window = fast_window if fast_window else getattr(Settings, 'STRATEGY_MA_FAST', 30)
-        self.slow_window = slow_window if slow_window else getattr(Settings, 'STRATEGY_MA_SLOW', 240)
-        self.threshold = threshold if threshold is not None else getattr(Settings, 'STRATEGY_THRESHOLD', 5.0)
-        self.resample_min = resample if resample else getattr(Settings, 'STRATEGY_RESAMPLE_MIN', 5)
-        self.stop_loss = stop_loss if stop_loss else getattr(Settings, 'STOP_LOSS_POINT', 300.0)
+        self.fast_window = fast_window
+        self.slow_window = slow_window
+        self.threshold = threshold
+        self.resample_min = resample
+        self.stop_loss = stop_loss
 
         # 2. 初始化父類別 (註冊名稱)
         name = f"MA({self.fast_window}/{self.slow_window})"

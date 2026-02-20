@@ -79,22 +79,34 @@ class CsvHistoryFeeder:
 
     def _run_loop(self):
         """背景回放迴圈"""
-        for index, row in self.df.iterrows():
+        #for index, row in self.df.iterrows():
+        for row in self.df.itertuples(index=False):
             if not self.running: break
             
             # 修正點：移除 event_type 參數
             # 假設 BarEvent 的定義是 (symbol, timestamp, open, high, low, close, volume)
             # 如果還有其他參數 (如 open_interest)，請依據 core/event.py 補上
             try:
+                # 注意：itertuples 回傳的是屬性，所以原本的 row['close'] 要改成 row.close
                 bar = BarEvent(
                     symbol=self.target_code,
-                    timestamp=row['datetime'],
-                    open=row['open'],
-                    high=row['high'],
-                    low=row['low'],
-                    close=row['close'],
-                    volume=row['volume']
+                    timestamp=row.datetime,
+                    open=row.open,
+                    high=row.high,
+                    low=row.low,
+                    close=row.close,
+                    volume=row.volume
                 )
+
+                # bar = BarEvent(
+                #     symbol=self.target_code,
+                #     timestamp=row['datetime'],
+                #     open=row['open'],
+                #     high=row['high'],
+                #     low=row['low'],
+                #     close=row['close'],
+                #     volume=row['volume']
+                # )
                 
                 if self.on_bar_callback:
                     # 這裡可以簡單印出時間，確認有在跑
@@ -106,7 +118,8 @@ class CsvHistoryFeeder:
                 self.running = False
                 break
             
-            time.sleep(self.speed)
+            if self.speed > 0:
+                time.sleep(self.speed)
             
         print("\n🏁 [Sim] 回放結束")
         self.running = False

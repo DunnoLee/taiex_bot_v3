@@ -335,9 +335,10 @@ class BotEngine:
             print("⚠️ 無歷史資料，策略將從 0 開始累積")
 
     def on_bar_generated(self, bar: BarEvent):
-        icon = "▶️" if self.auto_trading_active else "⏸"
-        print(f"📊 {bar.timestamp.strftime('%H:%M')} C:{int(bar.close)} {icon}", end='\r')
-        
+        if self.enable_telegram:
+            icon = "▶️" if self.auto_trading_active else "⏸"
+            print(f"📊 {bar.timestamp.strftime('%H:%M')} C:{int(bar.close)} {icon}", end='\r')
+            
         signal = self.strategy.on_bar(bar)
         
         if signal:

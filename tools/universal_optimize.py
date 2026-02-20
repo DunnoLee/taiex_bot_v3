@@ -97,12 +97,13 @@ if __name__ == "__main__":
     if choice == '1':
         # 測試 MA-ADX 的參數
         param_grid = {
-            'fast_window': [15, 30, 45],            # 測試 3 種快線
-            'slow_window': [120, 240, 300],         # 測試 3 種慢線
-            'adx_threshold': [20, 25, 30],          # 測試 3 種 ADX 門檻
+            'fast_window': [15, 45],            # 測試 3 種快線
+            'slow_window': [120, 300],         # 測試 3 種慢線
+            'adx_threshold': [20, 30],          # 測試 3 種 ADX 門檻
             'adx_period': [14],                     #
-            'resample': [5],                        # 固定 5分K
-            'stop_loss': [250.0, 300.0, 400.0]      # 測試 3 種停損點
+            'resample': [5,60],                        # 固定 5分K
+            'filter_point': [5.0,100.0],
+            'stop_loss': [250.0, 400.0]      # 測試 3 種停損點
         }
         # 3 x 3 x 3 x 1 x 3 = 81 種組合
         run_grid_search(MaAdxStrategy, param_grid, HISTORY_FILE)
