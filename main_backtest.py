@@ -8,7 +8,7 @@ from core.recorder import TradeRecorder
 from strategies.ma_strategy import MAStrategy
 from strategies.rsi_strategy import RsiStrategy
 from strategies.rsi_trend_strategy import RsiTrendStrategy
-from strategies.ma_adx_strategy import MaAdxStrategy
+
 from strategies.smart_hold_strategy import SmartHoldStrategy
 
 # --- 設定 ---
@@ -46,6 +46,7 @@ def main():
     # )
 
     # 參數設定：MA(30/240)，並加上 ADX > 25 才能進場的限制
+    from strategies.ma_adx_strategy import MaAdxStrategy
     my_strategy = MaAdxStrategy(
         # fast_window=30, 
         # slow_window=240, 

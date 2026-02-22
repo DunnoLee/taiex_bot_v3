@@ -25,6 +25,8 @@ class SmartHoldStrategy(BaseStrategy):
         self.cached_ma = None
 
     def on_bar(self, bar: BarEvent) -> SignalEvent:
+        # 👇 新增這行：每次有 K 棒進來，就把最新收盤價記在自己身上
+        self.latest_price = bar.close
         # 1. 檢查硬停損 (防止單日極端黑天鵝)
         sl_signal = self._check_stop_loss(bar.close, bar.symbol)
         if sl_signal: return sl_signal
@@ -118,3 +120,10 @@ class SmartHoldStrategy(BaseStrategy):
                 self.raw_bars.append({'datetime': bar['datetime'], 'close': bar['close']})
             else:
                 self.raw_bars.append({'datetime': bar.timestamp, 'close': bar.close})
+
+    def get_ui_dict(self):
+        return {
+            "💰 目前報價": f"{getattr(self, 'latest_price', '等待開盤...')}",
+            "📊 日均線 (MA)": f"{self.cached_ma:.1f}" if self.cached_ma else "N/A",
+            "🛡️ 避震器寬度": f"{self.threshold} 點"
+        }

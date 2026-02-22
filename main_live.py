@@ -9,6 +9,8 @@ from core.engine import BotEngine
 from strategies.ma_strategy import MAStrategy
 from strategies.smart_hold_strategy import SmartHoldStrategy
 from tools.universal_downloader import UniversalDownloader
+from modules.ui_dashboard import DashboardUI
+
 
 def main():
     # my_strategy = MAStrategy(
@@ -144,11 +146,22 @@ def main():
     # -----------------------------------------------------
     # 6. 正式開跑
     # -----------------------------------------------------
-    print("\n🟢 [系統] 引擎啟動，開始監聽行情...")
-    bot.start() 
+    # print("\n🟢 [系統] 引擎啟動，開始監聽行情...")
+    # bot.start() 
     # bot.start() 內部會啟動 feeder，並進入無窮迴圈(如果是 Live 模式)
     # 除非遇到 Ctrl+C 或 /kill 指令
+    print("\n🟢 [系統] 引擎啟動，準備切換至戰術儀表板...")
+    time.sleep(2) # 讓你看一下前面的連線成功訊息，再切畫面
 
+    # 初始化 UI (把 bot 傳給它，讓它可以透視策略數據)
+    ui = DashboardUI(bot)
+
+    # 把 bot.start() 丟到背景執行緒去跑，這樣它才不會卡住儀表板的畫面更新
+    bot_thread = threading.Thread(target=bot.start, daemon=True)
+    bot_thread.start()
+
+    # 在主執行緒啟動儀表板畫面！
+    ui.start_ui(bot_thread)
 if __name__ == "__main__":
     try:
         main()

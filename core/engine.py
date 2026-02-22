@@ -147,74 +147,85 @@ class BotEngine:
             print(f"⚙️ [Engine] 自動交易已{state}")
 
         def manual_trade(action: str, qty: int):
-            """處理 /buy, /sell 指令 (含 Smart Close 邏輯)"""
+            """處理 /buy, /sell 指令 (無限制市價盲狙 + 完整記帳版)"""
             print(f"👋 [Manual] 收到手動交易指令: {action} {qty} 口")
             
-            current_price = 0
-            current_time = datetime.datetime.now()
-            if self.strategy.raw_bars:
-                last_bar = self.strategy.raw_bars[-1]
-                current_price = last_bar['close']
-                current_time = last_bar['datetime']
-            
-            # 智慧判斷
-            current_pos = self.strategy.position
-            target_signal = None
-            
-            if action == "BUY":
-                if current_pos < 0:
-                    target_signal = SignalType.FLATTEN
-                    print("💡 [Smart] 偵測到持有空單，將 /buy 轉換為平倉訊號")
-                else:
-                    target_signal = SignalType.LONG
-            elif action == "SELL":
-                if current_pos > 0:
-                    target_signal = SignalType.FLATTEN
-                    print("💡 [Smart] 偵測到持有多單，將 /sell 轉換為平倉訊號")
-                else:
-                    target_signal = SignalType.SHORT
+            try:
+                # 1. 取得價格與時間 (安全模式)
+                current_price = getattr(self.strategy, 'latest_price', 0.0)
+                current_time = datetime.datetime.now()
+                
+                if self.strategy.raw_bars:
+                    last_bar = self.strategy.raw_bars[-1]
+                    current_time = last_bar['datetime'] if isinstance(last_bar, dict) else getattr(last_bar, 'timestamp', current_time)
+                
+                if current_price == 0.0:
+                    warning_msg = "⚠️ 警告：目前無報價，系統將直接以【市價單】盲出！"
+                    print(f"🚫 [Manual] {warning_msg}")
+                    self.commander.send_message(warning_msg)
+                
+                # 2. 智慧判斷：如果你持有空單卻按 /buy，自動轉成平倉！
+                current_pos = self.strategy.position
+                target_signal = None
+                
+                if action == "BUY":
+                    if current_pos < 0: target_signal = SignalType.FLATTEN
+                    else: target_signal = SignalType.LONG
+                elif action == "SELL":
+                    if current_pos > 0: target_signal = SignalType.FLATTEN
+                    else: target_signal = SignalType.SHORT
 
-            signal = SignalEvent(EventType.SIGNAL, self.symbol, target_signal, 1.0, f"Manual {action}")
-
-            pnl_before = self.executor.total_pnl
-            
-            msg = ""
-            # 呼叫 Executor (Mock 或 Real)
-            # 注意: RealExecutor 會根據 dry_run 決定是否真下單
-            # 但這裡的 msg 會回傳 "委託成功 ID..."
-            for _ in range(qty):
-                res = self.executor.execute_signal(signal, current_price)
-                if res: msg = res
-
-            pnl_after = self.executor.total_pnl
-            realized_pnl = pnl_after - pnl_before
-            
-            # 更新策略倉位
-            self.strategy.set_position(self.executor.current_position)
-            
-            # 更新成本價
-            if self.strategy.position != 0:
-                self.strategy.entry_price = current_price 
-            else:
-                self.strategy.entry_price = 0.0
-
-            # 寫 Log
-            if msg: 
-                self.recorder.write_trade(
-                    timestamp=current_time,
-                    symbol=self.symbol,
-                    action=action,
-                    price=current_price,
-                    qty=qty,
-                    strategy_name="Manual",
-                    pnl=realized_pnl,
-                    msg=f"Telegram User Command ({action})"
+                # 3. 製作軍令狀
+                signal = SignalEvent(
+                    type=EventType.SIGNAL, 
+                    symbol=self.symbol, 
+                    signal_type=target_signal, 
+                    strength=1.0, 
+                    reason=f"Telegram 手動干預 ({action})"
                 )
 
-            self.commander.send_message(f"✅ **手動成交**\n{msg}\n修正後倉位: {self.strategy.position}")
+                # 4. 強制執行官下單 & 記錄損益
+                pnl_before = self.executor.total_pnl
+                msg = ""
+                for _ in range(qty):
+                    res = self.executor.execute_signal(signal, current_price)
+                    if res: msg = res
+
+                pnl_after = self.executor.total_pnl
+                realized_pnl = pnl_after - pnl_before
+                
+                # 5. 🚀 恢復你的完美記帳邏輯：更新策略倉位與停損基準價
+                self.strategy.set_position(self.executor.current_position)
+                
+                if self.strategy.position != 0:
+                    self.strategy.entry_price = current_price 
+                else:
+                    self.strategy.entry_price = 0.0
+
+                # 6. 🚀 恢復你的 CSV 歷史交易紀錄寫入
+                if msg: 
+                    self.recorder.write_trade(
+                        timestamp=current_time,
+                        symbol=self.symbol,
+                        action=action,
+                        price=current_price,
+                        qty=qty,
+                        strategy_name="Manual",
+                        pnl=realized_pnl,
+                        msg=f"Telegram User Command ({action})"
+                    )
+
+                print(f"✅ [Manual] 執行官處理完畢！")
+                self.commander.send_message(f"✅ **手動成交**\n{msg}\n修正後倉位: {self.strategy.position}")
+
+            except Exception as e:
+                import traceback
+                print(f"❌ [Manual] 發生嚴重錯誤: {e}")
+                traceback.print_exc()
+                self.commander.send_message(f"❌ 手動下單崩潰: {e}")
 
         def flatten_position():
-            """處理 /flat 指令"""
+            """處理 /flat 指令 (無限制逃命 + 完整記帳版)"""
             current_pos = self.strategy.position
             if current_pos == 0:
                 self.commander.send_message("⚪️ **目前已是空手 (Flat)，無需動作**")
@@ -222,41 +233,63 @@ class BotEngine:
 
             print(f"👋 [Manual] 執行一鍵平倉，目前倉位: {current_pos}")
             
-            current_price = 0
-            current_time = datetime.datetime.now()
-            if self.strategy.raw_bars:
-                last_bar = self.strategy.raw_bars[-1]
-                current_price = last_bar['close']
-                current_time = last_bar['datetime']
+            try:
+                # 1. 安全取得價格與時間
+                current_price = getattr(self.strategy, 'latest_price', 0.0)
+                current_time = datetime.datetime.now()
+                
+                if self.strategy.raw_bars:
+                    last_bar = self.strategy.raw_bars[-1]
+                    current_time = last_bar['datetime'] if isinstance(last_bar, dict) else getattr(last_bar, 'timestamp', current_time)
 
-            sig_type = SignalType.FLATTEN 
-            signal = SignalEvent(EventType.SIGNAL, self.symbol, sig_type, 1.0, "Manual /flat")
+                if current_price == 0.0:
+                    self.commander.send_message("⚠️ 警告：目前無報價，將以【市價單】強行平倉逃命！")
 
-            pnl_before = self.executor.total_pnl
-            
-            msg = ""
-            res = self.executor.execute_signal(signal, current_price)
-            if res: msg = res
-
-            pnl_after = self.executor.total_pnl
-            realized_pnl = pnl_after - pnl_before
-
-            self.strategy.set_position(self.executor.current_position)
-            self.strategy.entry_price = 0.0
-
-            if msg:
-                self.recorder.write_trade(
-                    timestamp=current_time,
-                    symbol=self.symbol,
-                    action="FLATTEN",
-                    price=current_price,
-                    qty=abs(current_pos),
-                    strategy_name="Manual",
-                    pnl=realized_pnl,
-                    msg="Telegram User Command (/flat)"
+                # 2. 製作平倉訊號
+                sig_type = SignalType.FLATTEN 
+                # 🚀 替換後 (加上明確的變數名稱標籤)：
+                signal = SignalEvent(
+                    type=EventType.SIGNAL, 
+                    symbol=self.symbol, 
+                    signal_type=sig_type, 
+                    strength=1.0, 
+                    reason="Telegram 手動干預 (/flat)"
                 )
+                
+                # 3. 執行並結算損益
+                pnl_before = self.executor.total_pnl
+                msg = ""
+                res = self.executor.execute_signal(signal, current_price)
+                if res: msg = res
+                
+                pnl_after = self.executor.total_pnl
+                realized_pnl = pnl_after - pnl_before
 
-            self.commander.send_message(f"✅ **已全數平倉**\n{msg}\n實現損益: ${realized_pnl:,.0f}\n目前倉位: {self.strategy.position}")
+                # 4. 🚀 恢復策略清空與停損重置
+                self.strategy.set_position(self.executor.current_position)
+                self.strategy.entry_price = 0.0
+
+                # 5. 🚀 恢復 CSV 紀錄
+                if msg:
+                    self.recorder.write_trade(
+                        timestamp=current_time,
+                        symbol=self.symbol,
+                        action="FLATTEN",
+                        price=current_price,
+                        qty=abs(current_pos),
+                        strategy_name="Manual",
+                        pnl=realized_pnl,
+                        msg="Telegram User Command (/flat)"
+                    )
+
+                print(f"✅ [Manual] 平倉訊號已送出！")
+                self.commander.send_message(f"✅ **已全數平倉**\n{msg}\n實現損益: ${realized_pnl:,.0f}\n目前倉位: {self.strategy.position}")
+
+            except Exception as e:
+                import traceback
+                print(f"❌ [Manual] 平倉發生嚴重錯誤: {e}")
+                traceback.print_exc()
+                self.commander.send_message(f"❌ 平倉指令崩潰: {e}")
 
         def sync_position():
             """處理 /sync 指令 (強制同步真實倉位)"""

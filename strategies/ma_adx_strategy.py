@@ -96,6 +96,7 @@ class MaAdxStrategy(BaseStrategy):
         # 🛡️ 執行層 (1 分鐘微觀視角)：防禦機制掃描
         # 這段邏輯每 1 分鐘都會檢查一次，保護你的資金
         # ==========================================
+        self.latest_price = bar.close
         current_price = bar.close
         
         # 1. 永遠開啟：硬停損檢查
@@ -291,3 +292,22 @@ class MaAdxStrategy(BaseStrategy):
                     'datetime': bar.timestamp, 'open': bar.open, 'high': bar.high, 
                     'low': bar.low, 'close': bar.close, 'volume': bar.volume
                 })
+
+    def get_ui_dict(self):
+        """提供給 Dashboard UI 顯示的專屬指標"""
+        ma_status = "⏳ 等待資料"
+        if self.cached_ma_fast and self.cached_ma_slow:
+            diff = self.cached_ma_fast - self.cached_ma_slow
+            if diff > self.filter_point: ma_status = f"[green]多頭 (+{diff:.1f})[/green]"
+            elif diff < -self.filter_point: ma_status = f"[red]空頭 ({diff:.1f})[/red]"
+            else: ma_status = f"[yellow]盤整 ({diff:.1f})[/yellow]"
+            
+        return {
+            "💰 目前報價": f"{getattr(self, 'latest_price', '等待開盤...')}",
+            "快線 (MA)": f"{self.cached_ma_fast:.1f}" if self.cached_ma_fast else "N/A",
+            "慢線 (MA)": f"{self.cached_ma_slow:.1f}" if self.cached_ma_slow else "N/A",
+            "均線狀態": ma_status,
+            "波段鎖定": "🔒 已鎖定" if getattr(self, 'last_traded_wave', 0) != 0 else "🔓 未鎖定",
+            "ADX 強度": f"{self.cached_adx:.1f}" if self.cached_adx else "N/A",
+            "當前爆量": f"{self.cached_current_vol}" if self.cached_current_vol else "N/A"
+        }

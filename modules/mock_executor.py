@@ -1,4 +1,10 @@
 from core.base_executor import BaseExecutor
+import time
+
+# 建立一個假的期交所回報物件 (模仿 Shioaji 的格式)
+class MockUpdateInfo:
+    def __init__(self, status="Filled"):
+        self.status = status
 
 class MockExecutor(BaseExecutor):
     """
@@ -9,24 +15,29 @@ class MockExecutor(BaseExecutor):
         super().__init__(initial_capital)
         # 🚀 新增：預設每次成交滑價 1 點 (進出各滑 1 點，一趟就是 2 點成本)
         self.slippage_points = slippage_points 
+        self.order_callback = None  # 🚀 新增：用來存放回報機制的電話號碼
+
+    def set_order_callback(self, callback):
+        """模擬 Shioaji 的 api.set_order_callback"""
+        self.order_callback = callback
 
     def _execute_impl(self, direction, qty, price):
-        """
-        實作: 假裝成交，並模擬真實市場的吃虧滑價
-        """
         fill_price = price 
-        
-        # === 🩸 殘酷滑價模擬器 ===
-        # 確保 direction 轉成大寫來比對
-        if direction.upper() == 'BUY':
-            # 買進時，市場不給你原本的報價，強迫你買得「更貴」
-            fill_price = price + self.slippage_points
+        if direction.upper() == 'BUY': fill_price = price + self.slippage_points
+        elif direction.upper() == 'SELL': fill_price = price - self.slippage_points
             
-        elif direction.upper() == 'SELL':
-            # 賣出時，市場沒人接刀子，強迫你賣得「更便宜」
-            fill_price = price - self.slippage_points
-            
-        # 在訊息中記錄真實成交價與原本觸發價的差異，方便你對帳
-        msg = f"[Mock] {direction} {qty} @ {fill_price:.2f} (觸發價:{price:.2f}, 滑價吃虧:{self.slippage_points}點)"
+        msg = f"⚡️ [Mock] {direction} {qty} @ {fill_price:.2f} (滑價:{self.slippage_points})"
+        print(msg) # 🚀 確保終端機能印出這行，讓儀表板抓到！
         
+        # 🚀 模擬期交所的「非同步延遲回報」
+        if self.order_callback:
+            def fire_callback():
+                time.sleep(0.5) # 假裝網路傳輸花了 0.5 秒
+                mock_info = MockUpdateInfo(status="Filled")
+                self.order_callback(mock_info, None)
+                
+            # 開啟背景執行緒去打電話，不卡住目前的帳本結算！
+            import threading
+            threading.Thread(target=fire_callback, daemon=True).start()
+            
         return True, fill_price, msg
