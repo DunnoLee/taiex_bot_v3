@@ -8,6 +8,8 @@ from modules.shioaji_feeder import ShioajiFeeder
 from core.engine import BotEngine
 from strategies.ma_strategy import MAStrategy
 from strategies.smart_hold_strategy import SmartHoldStrategy
+from tools.universal_downloader import UniversalDownloader
+
 def main():
     # my_strategy = MAStrategy(
     #     fast_window=30, 
@@ -16,11 +18,13 @@ def main():
     #     threshold=5.0,
     #     resample=5
     # )
-    my_strategy = SmartHoldStrategy()
-    print(f"🧠 [策略] 載入模組: {my_strategy.name}")
+    from strategies.ma_adx_strategy import MaAdxStrategy
+    my_strategy = MaAdxStrategy()
+    # my_strategy = SmartHoldStrategy()
+    # print(f"🧠 [策略] 載入模組: {my_strategy.name}")
 
-    print(f"🚀 TaiEx Bot V3 [Live Mode] 啟動中...")
-    print(f"==========================================")
+    # print(f"🚀 TaiEx Bot V3 [Live Mode] 啟動中...")
+    # print(f"==========================================")
 
     # -----------------------------------------------------
     # 1. 建立 Shioaji 連線
@@ -121,6 +125,15 @@ def main():
     # -----------------------------------------------------
     # 5. 數據預載 (Warm-up) - 雙軌機制的第一步
     # -----------------------------------------------------
+    print("\n🔄 [系統] 啟動開機自檢：檢查並更新歷史 K 棒...")
+    # try:
+    #     # 呼叫下載器，自動把缺少的 K 棒補齊到 CSV 裡
+    #     downloader = UniversalDownloader()
+    #     downloader.run()
+    #     print("✅ [系統] 歷史資料更新完畢！")
+    # except Exception as e:
+    #     print(f"⚠️ [系統] 歷史資料更新失敗，將使用現有 CSV 繼續執行。錯誤: {e}")
+
     print("\n📂 [資料] 正在載入歷史資料 (Cold Data)...")
     # 這裡先讀 CSV，讓 MA 線有基礎
     bot.load_warmup_data("data/history/TMF_History.csv")

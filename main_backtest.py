@@ -47,13 +47,13 @@ def main():
 
     # 參數設定：MA(30/240)，並加上 ADX > 25 才能進場的限制
     my_strategy = MaAdxStrategy(
-        fast_window=30, 
-        slow_window=240, 
-        adx_period=14, 
-        adx_threshold=25,   # ADX 超過 25 才算有趨勢
-        filter_point=5.0, 
-        resample=5, 
-        stop_loss=300.0
+        # fast_window=30, 
+        # slow_window=240, 
+        # adx_period=14, 
+        # adx_threshold=25,   # ADX 超過 25 才算有趨勢
+        # filter_point=5.0, 
+        # resample=5, 
+        # stop_loss=300.0
     )
 
     # 20日均線(月線) 作為牛熊分水嶺，停損設大一點(例如800點)避免日內洗盤

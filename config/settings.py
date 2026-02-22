@@ -36,7 +36,7 @@ class Settings:
     LOG_LEVEL = "INFO"
     TIMEZONE = "Asia/Taipei"
 
-    DRY_RUN=True
+    DRY_RUN=False
 
     # 檢查必要設定是否存在
     @classmethod

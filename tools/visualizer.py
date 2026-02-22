@@ -30,8 +30,8 @@ def visualize(log_path):
         df_hist.columns = [c.strip() for c in df_hist.columns] # 清理欄位
         
         # 處理 Shioaji 時間格式
-        if 'Time' in df_hist.columns:
-            df_hist['datetime'] = pd.to_datetime(df_hist['Time'])
+        if 'datetime' in df_hist.columns:
+            df_hist['datetime'] = pd.to_datetime(df_hist['datetime'])
         else:
             print("❌ 歷史資料缺少 'Time' 欄位")
             return
@@ -55,7 +55,7 @@ def visualize(log_path):
         plt.figure(figsize=(15, 8))
         
         # 畫價格線 (用收盤價代替 K 線，比較快)
-        plt.plot(df_view.index, df_view['Close'], label='Price', color='gray', alpha=0.5, linewidth=1)
+        plt.plot(df_view.index, df_view['close'], label='Price', color='gray', alpha=0.5, linewidth=1)
         
         # -------------------------------------------------------
         # 💡 新增邏輯：區分「普通買賣」與「停損出場」
