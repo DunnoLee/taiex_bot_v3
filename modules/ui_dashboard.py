@@ -11,29 +11,37 @@ from rich.text import Text
 from rich.console import Console
 
 class LogInterceptor:
-    """魔法攔截器：把原本要 print 到螢幕的字抓下來，放進儀表板下半部，並存入檔案"""
+    """魔法攔截器：支援雙向分流 (Tee) 與 UI 接管模式"""
     def __init__(self, log_file="data/backtest_results/live_process.log"):
-        self.logs = deque(maxlen=15) # 下半部只顯示最新的 15 行 Log
+        self.logs = deque(maxlen=15)
         self.original_stdout = sys.stdout
-        self.original_stderr = sys.stderr  # 🚀 新增：記住原本的 stderr
+        self.original_stderr = sys.stderr
         self.log_file = log_file
+        self.ui_active = False # 🚀 新增開關：儀表板是否已接管畫面？
 
     def write(self, text):
-        if text.strip(): # 忽略空白換行
+        if text.strip():
             time_str = datetime.now().strftime("%H:%M:%S")
             log_line = f"[{time_str}] {text.strip()}"
             self.logs.append(log_line)
-            # 同時寫入實體檔案，永久保存
+            
+            # 1. 永遠寫入實體檔案 (確保 log 不漏接)
             with open(self.log_file, "a", encoding="utf-8") as f:
                 f.write(log_line + "\n")
+            
+            # 2. 🚀 分流邏輯：如果儀表板還沒開，就照常印在傳統終端機上
+            if not self.ui_active:
+                self.original_stdout.write(text) # 注意這裡不加 \n，保留原本 print 的格式
                 
     def flush(self):
-        pass
+        if not self.ui_active:
+            self.original_stdout.flush()
 
 class DashboardUI:
-    def __init__(self, bot):
+    # 🚀 加上 interceptor=None，如果外部有傳進來，就用外部的；沒有就自己建一個
+    def __init__(self, bot, interceptor=None):
         self.bot = bot
-        self.interceptor = LogInterceptor()
+        self.interceptor = interceptor if interceptor else LogInterceptor()
 
     def generate_layout(self) -> Layout:
         """每次畫面更新時，重新組裝儀表板"""
@@ -75,8 +83,11 @@ class DashboardUI:
         upper_panel = Panel(table, title="[bold yellow]🚀 TaiEx Bot V3 戰術儀表板[/bold yellow]", border_style="blue")
         layout["upper"].update(upper_panel)
 
-        # === 建立下半部：滾動日誌 ===
-        log_text = Text("\n".join(self.interceptor.logs))
+        # 🚀 視覺修復：強制只拿「最後 8 行」，確保在任何螢幕尺寸下，
+        # 最新的 Live 訊息絕對不會被擠到螢幕底下隱藏起來！
+        safe_logs = list(self.interceptor.logs)[-8:] 
+        
+        log_text = Text("\n".join(safe_logs))
         lower_panel = Panel(log_text, title="[bold white]📝 系統執行日誌 (Live)[/bold white]", border_style="green")
         layout["lower"].update(lower_panel)
 
@@ -84,6 +95,9 @@ class DashboardUI:
 
     def start_ui(self, bot_thread=None):
         """啟動儀表板 (支援與背景引擎連動)"""
+        # 🚀 告訴攔截器：UI 正式接管畫面，關閉傳統輸出！
+        self.interceptor.ui_active = True
+
         # 1. 啟動攔截器
         sys.stdout = self.interceptor
         sys.stderr = self.interceptor # 🚀 新增：把錯誤管線也導向儀表板

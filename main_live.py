@@ -20,6 +20,14 @@ def main():
     #     threshold=5.0,
     #     resample=5
     # )
+    # =====================================================
+    # 🚀 0. 提早佈署全域攔截網 (從第 0 秒開始抓取所有 Log)
+    # =====================================================
+    from modules.ui_dashboard import LogInterceptor
+    global_interceptor = LogInterceptor()
+    sys.stdout = global_interceptor
+    sys.stderr = global_interceptor
+
     from strategies.ma_adx_strategy import MaAdxStrategy
     my_strategy = MaAdxStrategy()
     # my_strategy = SmartHoldStrategy()
@@ -75,7 +83,7 @@ def main():
     target_symbol = getattr(Settings, "TARGET_CONTRACT", "TMF202603")
     bot = BotEngine(strategy=my_strategy, feeder=feeder, executor=executor, symbol=target_symbol)
 
-# =====================================================
+    # =====================================================
     # 🛡️ 實戰核心防護：綁定「券商成交回報」監聽器 (自動對帳)
     # =====================================================
     def on_order_event(update_info, update_events):
@@ -144,24 +152,25 @@ def main():
     # bot.fetch_missing_bars_from_api() 
 
     # -----------------------------------------------------
-    # 6. 正式開跑
+    # 6. 正式開跑 (全息投影儀表板)
     # -----------------------------------------------------
-    # print("\n🟢 [系統] 引擎啟動，開始監聽行情...")
-    # bot.start() 
-    # bot.start() 內部會啟動 feeder，並進入無窮迴圈(如果是 Live 模式)
-    # 除非遇到 Ctrl+C 或 /kill 指令
-    print("\n🟢 [系統] 引擎啟動，準備切換至戰術儀表板...")
-    time.sleep(2) # 讓你看一下前面的連線成功訊息，再切畫面
+    print("\n🟢 [系統] 啟動全域攔截網與初始化 UI...")
+    # 🚀 告訴儀表板：「請使用我們一開機就架好的攔截網！」
+    ui = DashboardUI(bot, interceptor=global_interceptor)
+    
+    # # 🚀 提早綁定攔截器！這時候的 print 會同時上螢幕、進檔案、進記憶體
+    # sys.stdout = ui.interceptor
+    # sys.stderr = ui.interceptor
 
-    # 初始化 UI (把 bot 傳給它，讓它可以透視策略數據)
-    ui = DashboardUI(bot)
+    print("\n🟢 [系統] 執行 API 前置連線與訂閱 (Main Thread)...")
+    bot.start(block=False)
 
-    # 把 bot.start() 丟到背景執行緒去跑，這樣它才不會卡住儀表板的畫面更新
-    bot_thread = threading.Thread(target=bot.start, daemon=True)
-    bot_thread.start()
+    print("\n🟢 [系統] 準備切換至戰術儀表板...")
+    time.sleep(2)
 
-    # 在主執行緒啟動儀表板畫面！
-    ui.start_ui(bot_thread)
+    # 🚀 正式切換成 Rich Live 畫面 (內部會自動切換 ui_active 開關)
+    ui.start_ui()
+
 if __name__ == "__main__":
     try:
         main()

@@ -276,22 +276,35 @@ class MaAdxStrategy(BaseStrategy):
         return None
 
     def load_history_bars(self, bars_list: list):
+        """將歷史 K 棒餵給大腦，強制進行指標暖機計算"""
+        print(f"🧠 [Strategy] 準備消化 {len(bars_list)} 根歷史資料以計算指標...")
+        from core.event import BarEvent
+        
+        # 為了避免暖機時亂發訊號，我們先把部位與停損狀態鎖定
+        original_pos = getattr(self, 'position', 0)
+        
         for bar in bars_list:
+            # 轉換成標準 K 棒物件
             if isinstance(bar, dict):
-                # 確保載入完整的 OHLCV
-                self.raw_bars.append({
-                    'datetime': bar.get('datetime'),
-                    'open': bar.get('open', bar.get('close')),
-                    'high': bar.get('high', bar.get('close')),
-                    'low': bar.get('low', bar.get('close')),
-                    'close': bar.get('close'),
-                    'volume': bar.get('volume', 0)
-                })
+                b = BarEvent(
+                    symbol=getattr(self, 'symbol', 'TMF'),
+                    timestamp=bar.get('datetime'),
+                    open=bar.get('open', bar.get('close')),
+                    high=bar.get('high', bar.get('close')),
+                    low=bar.get('low', bar.get('close')),
+                    close=bar.get('close'),
+                    volume=bar.get('volume', 0)
+                )
             else:
-                self.raw_bars.append({
-                    'datetime': bar.timestamp, 'open': bar.open, 'high': bar.high, 
-                    'low': bar.low, 'close': bar.close, 'volume': bar.volume
-                })
+                b = bar
+            
+            # 🚀 關鍵：讓策略大腦正常處理這根 K 棒，藉此算出 MA、ADX 等所有指標！
+            # 但我們故意忽略它回傳的任何下單訊號 (SignalEvent)
+            self.on_bar(b)
+            
+        # 暖機完畢，把部位重置回原本的狀態 (防止暖機過程的歷史訊號干擾現在)
+        self.position = original_pos
+        print(f"✅ [Strategy] 指標暖機完成！目前快線: {self.cached_ma_fast}, 慢線: {self.cached_ma_slow}")
 
     def get_ui_dict(self):
         """提供給 Dashboard UI 顯示的專屬指標"""

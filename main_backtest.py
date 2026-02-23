@@ -46,8 +46,8 @@ def main():
     # )
 
     # 參數設定：MA(30/240)，並加上 ADX > 25 才能進場的限制
-    from strategies.ma_adx_strategy import MaAdxStrategy
-    my_strategy = MaAdxStrategy(
+    # from strategies.ma_adx_strategy import MaAdxStrategy
+    # my_strategy = MaAdxStrategy(
         # fast_window=30, 
         # slow_window=240, 
         # adx_period=14, 
@@ -55,7 +55,9 @@ def main():
         # filter_point=5.0, 
         # resample=5, 
         # stop_loss=300.0
-    )
+    # )
+    from strategies.asym_ma_adx_strategy import AsymMaAdxStrategy
+    my_strategy = AsymMaAdxStrategy()
 
     # 20日均線(月線) 作為牛熊分水嶺，停損設大一點(例如800點)避免日內洗盤
     #my_strategy = SmartHoldStrategy(daily_ma_period=20, stop_loss=800.0)

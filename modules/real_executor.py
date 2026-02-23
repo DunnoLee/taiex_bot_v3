@@ -176,3 +176,33 @@ class RealExecutor(BaseExecutor):
         except Exception as e:
             print(f"❌ 查詢持倉失敗: {e}")
             return 0
+        
+    def get_real_cost(self):
+        """
+        向永豐 API 查詢目前部位的真實平均成本
+        回傳: float (平均成本價)
+        """
+        try:
+            if not self.account: return 0.0
+            
+            positions = self.api.list_positions(self.account)
+            total_cost = 0.0
+            total_qty = 0
+            
+            for p in positions:
+                if "TMF" in p.code: # 確保是我們關注的微型台指期
+                    qty = int(p.quantity)
+                    price = float(p.price) # 永豐 API 回傳的真實成本價
+                    
+                    total_qty += qty
+                    total_cost += (price * qty)
+            
+            # 如果有部位，計算加權平均成本
+            if total_qty > 0:
+                return total_cost / total_qty
+            else:
+                return 0.0
+                
+        except Exception as e:
+            print(f"❌ 查詢真實成本失敗: {e}")
+            return 0.0

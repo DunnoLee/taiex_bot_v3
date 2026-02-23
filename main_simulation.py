@@ -15,9 +15,12 @@ def main():
     #     threshold=5.0,
     #     resample=5
     # )
-    from strategies.ma_adx_strategy import MaAdxStrategy
-    my_strategy = MaAdxStrategy()
+    # from strategies.ma_adx_strategy import MaAdxStrategy
+    # my_strategy = MaAdxStrategy()
 
+    from strategies.asym_ma_adx_strategy import AsymMaAdxStrategy
+    my_strategy = AsymMaAdxStrategy()
+    
     # from strategies.smart_hold_strategy import SmartHoldStrategy
     # my_strategy = SmartHoldStrategy(daily_ma_period=20, stop_loss=800.0)
 

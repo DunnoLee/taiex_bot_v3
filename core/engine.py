@@ -255,7 +255,7 @@ class BotEngine:
                     strength=1.0, 
                     reason="Telegram 手動干預 (/flat)"
                 )
-                
+
                 # 3. 執行並結算損益
                 pnl_before = self.executor.total_pnl
                 msg = ""
@@ -292,7 +292,7 @@ class BotEngine:
                 self.commander.send_message(f"❌ 平倉指令崩潰: {e}")
 
         def sync_position():
-            """處理 /sync 指令 (強制同步真實倉位)"""
+            """處理 /sync 指令 (強制同步真實倉位 + 修復成本價失憶症)"""
             mode_str, is_real = get_mode_info()
             
             if not is_real:
@@ -312,9 +312,36 @@ class BotEngine:
             self.strategy.set_position(real_pos)
             self.executor.current_position = real_pos
             
-            # 歸零均價 (因為我們不知道真實成本)
-            # 或者未來可以透過 api.list_positions 抓真實成本價
-            self.executor.avg_price = 0.0 
+            # 🚀 致命重點防護：修復「失憶症」，如果發現有單但沒成本價，用現在市價當成本！
+            if real_pos != 0 and getattr(self.strategy, 'entry_price', 0.0) == 0.0:
+                
+                # 1. 優先向 Executor 討要真實成本
+                real_cost = getattr(self.executor, 'get_real_cost', lambda: 0.0)()
+                
+                if real_cost > 0:
+                    current_price = real_cost
+                    cost_source_msg = "API 真實成本"
+                else:
+                    # 2. 備案：如果 Executor 拿不到，才用當下市價盲猜
+                    current_price = getattr(self.strategy, 'latest_price', 0.0)
+                    cost_source_msg = "當前市價 (備案)"
+                    
+                if current_price > 0:
+                    self.strategy.entry_price = current_price
+
+                    # 🚀 新增這行：把新成本價也同步給會計師，避免損益計算錯誤！
+                    self.executor.avg_price = current_price
+
+                    # 移動停利的基準點也要一起重置 (如果該策略有這些屬性的話)
+                    if hasattr(self.strategy, 'highest_price'): self.strategy.highest_price = current_price
+                    if hasattr(self.strategy, 'lowest_price'): self.strategy.lowest_price = current_price
+                    
+                    msg = f"⚠️ [Sync] 已接管未結算部位！成本基準價重新錨定為當前市價: {current_price}"
+                    print(msg)
+                    self.commander.send_message(msg)
+            else:
+                # 歸零均價
+                self.executor.avg_price = 0.0 
             
             self.commander.send_message(
                 f"✅ **同步完成**\n"
@@ -347,9 +374,55 @@ class BotEngine:
     def _bind_events(self):
         """綁定事件流 (Data Pipeline)"""
         
+        # 🚀 裝甲升級：替 Tick 接收器穿上防彈衣，並加上「第一滴血」偵測
+        self._first_tick_received = False
+        
+        def safe_on_tick(tick):
+            try:
+                # 偵測第一筆報價，證明 API 真的有送資料過來！
+                if not self._first_tick_received:
+                    print(f"💧 [診斷] 成功接收到第一筆即時報價！")
+                    self._first_tick_received = True
+                
+                # ==========================================
+                # 🔌 萬用轉接頭：把 Dict 偽裝成 Object，並補上 Symbol
+                # ==========================================
+                if isinstance(tick, dict):
+                    class DummyTick: pass
+                    t_obj = DummyTick()
+                    
+                    # 1. 補齊標的名稱 (如果 API 沒傳，就用我們訂閱的 symbol)
+                    t_obj.symbol = tick.get('symbol', self.symbol) 
+                    
+                    # 2. 抄寫價格與時間
+                    t_obj.price = tick.get('price', tick.get('close', 0.0))
+                    t_obj.volume = tick.get('volume', 1)
+                    t_obj.datetime = tick.get('datetime')
+                    
+                    # 🚀 關鍵修正：Aggregator 認得的名字是 timestamp，不是 datetime！
+                    t_obj.timestamp = tick.get('datetime') 
+                    
+                    # 為了防呆，順便把 datetime 也綁上去，以防其他地方用到
+                    t_obj.datetime = t_obj.timestamp 
+                    
+                    # 將轉接好的物件交給合成器
+                    self.aggregator.on_tick(t_obj)
+                else:
+                    # 如果本來就是物件 (例如回測時)，就直接放行
+                    # 但為了安全，如果沒有 symbol 也強制幫它貼上
+                    if not hasattr(tick, 'symbol'):
+                        tick.symbol = self.symbol
+                    self.aggregator.on_tick(tick)
+                
+            except Exception as e:
+                import traceback
+                print(f"❌ [Aggregator] 處理 Tick 時發生致命崩潰: {e}")
+                traceback.print_exc()
+
         # 情境 A: Feeder 是餵 Tick 的 (如 ShioajiFeeder)
         if hasattr(self.feeder, 'set_on_tick'):
-            self.feeder.set_on_tick(self.aggregator.on_tick)
+            self.feeder.set_on_tick(safe_on_tick) # 👈 改綁定我們的防彈版
+            print("🔗 [Engine] 已綁定安全版 Tick 接收器！")
         
         # 情境 B: Feeder 是餵 Bar 的 (如 MockFeeder)
         # 我們直接把 Engine 的 on_bar_generated 綁給它
@@ -360,7 +433,7 @@ class BotEngine:
         self.aggregator.set_on_bar(self.on_bar_generated)
 
     def load_warmup_data(self, csv_path="data/history/TMF_History.csv"):
-        history_bars = load_history_data(csv_path, tail_count=3000)
+        history_bars = load_history_data(csv_path, tail_count=6000)
         if history_bars:
             self.strategy.load_history_bars(history_bars)
             self.commander.send_message(f"✅ **暖機完成**\n已載入 {len(history_bars)} 根歷史 K 棒")
@@ -370,14 +443,33 @@ class BotEngine:
     def on_bar_generated(self, bar: BarEvent):
         if self.enable_telegram:
             icon = "▶️" if self.auto_trading_active else "⏸"
-            print(f"📊 {bar.timestamp.strftime('%H:%M')} C:{int(bar.close)} {icon}", end='\r')
+            
+            # 🚀 移除 end='\r'，強制換行，確保每一根 K 棒都能穩穩寫入 Log 攔截器！
+            print(f"📊 {bar.timestamp.strftime('%H:%M')} C:{int(bar.close)} {icon}")
             
         signal = self.strategy.on_bar(bar)
         
         if signal:
+            # ==========================================
+            # 🛡️ 觀望模式 (半自動駕駛)：只廣播，不下單
+            # ==========================================
             if not self.auto_trading_active:
-                print(f"\n🚫 [已暫停] 忽略訊號: {signal.signal_type}")
-                return
+                print(f"\n🔔 [觀望模式] 偵測到訊號，但不執行下單: {signal.signal_type.name} | {signal.reason}")
+                
+                if self.enable_telegram and hasattr(self, 'commander') and self.commander:
+                    # 判斷一下建議的手動指令
+                    suggest_cmd = "/buy" if signal.signal_type == SignalType.LONG else ("/sell" if signal.signal_type == SignalType.SHORT else "/flat")
+                    
+                    self.commander.send_message(
+                        f"🔔 **[觀望模式] 訊號觸發 (未下單)**\n"
+                        f"🎯 動作: {signal.signal_type.name}\n"
+                        f"📊 標的: {self.symbol} @ {bar.close}\n"
+                        f"📝 原因: {signal.reason}\n"
+                        f"------------------\n"
+                        f"💡 若要手動跟單，請輸入 `{suggest_cmd}`\n"
+                        f"▶️ 若要交還兵權恢復自動，請輸入 `/start`"
+                    )
+                return # 🚀 結束函數，絕對不會呼叫 Executor 下單！
 
             print(f"\n⚡️ [訊號觸發] {signal.signal_type} | {signal.reason}")
             
@@ -469,6 +561,8 @@ class BotEngine:
                 print(f"🧐 [Debug] API 資料範圍: {first_api_time} ~ {last_api_time}")
 
             # --- 開始比對與接合 ---
+            new_warmup_bars = [] # 🚀 準備一個盤子裝新資料
+
             for bar in recent_bars:
                 bar_time = pd.to_datetime(bar['datetime']) # 確保也是 Timestamp
                 
@@ -488,6 +582,11 @@ class BotEngine:
                 })
                 count += 1
             
+            # 🚀 關鍵修復：把這盤 API 溫數據，正式交給大腦的消化系統！
+            if new_warmup_bars:
+                print(f"🧠 [Engine] 準備將 {count} 根 API 溫數據餵給大腦消化...")
+                self.strategy.load_history_bars(new_warmup_bars)
+
             print(f"🔗 [Engine] 雙軌對接完成！成功接合 {count} 根 K 棒。")
         #     # --- 🛡️ 資料連續性檢查 (Gap Detection) ---
         #     if count > 0 and last_strategy_time:
@@ -571,7 +670,7 @@ class BotEngine:
             else:
                  print("⚠️ [Engine] 策略內無任何 K 棒資料！")
 
-    def start(self):
+    def start(self,block=True):
         print(f"🚀 Engine Started: {self.symbol}")
         self.commander.start_listening()
         strategy_info = getattr(self.strategy, 'name', 'Unknown Strategy')
@@ -600,13 +699,28 @@ class BotEngine:
             
             self.feeder.start()
             
-            while self.system_running:
-                time.sleep(1)
-                # 👈 新增這段檢查邏輯
-                # 檢查 feeder 是否有 running 屬性，如果有且變成 False，代表回放結束了
-                if hasattr(self.feeder, 'running') and not self.feeder.running:
-                    print("\n🏁 [Engine] 偵測到歷史資料回放完畢，自動退出主迴圈！")
-                    break
+            # ==========================================
+            # 🚀 終極防護：開機自動對帳 (Auto-Sync)
+            # ==========================================
+            if hasattr(self.commander, 'sync_position_cb') and self.commander.sync_position_cb:
+                # 🛡️ 加上這行判斷：只有實戰模式 (有連接 API) 才需要開機對帳
+                if hasattr(self.executor, 'api'):
+                    print("\n🔄 [Engine] 系統初始化完成，啟動自動對帳程序...")
+                    self.commander.sync_position_cb()
+                else:
+                    print("\n🎮 [Engine] 模擬模式啟動，初始部位設定為 0。")
+            # ==========================================
+
+            # 🚀 把迴圈包進 block 條件裡
+            if block:
+
+                while self.system_running:
+                    time.sleep(1)
+                    # 👈 新增這段檢查邏輯
+                    # 檢查 feeder 是否有 running 屬性，如果有且變成 False，代表回放結束了
+                    if hasattr(self.feeder, 'running') and not self.feeder.running:
+                        print("\n🏁 [Engine] 偵測到歷史資料回放完畢，自動退出主迴圈！")
+                        break
                     
         except KeyboardInterrupt:
             print("\n🛑 手動中斷")
