@@ -56,55 +56,63 @@ class BotEngine:
             else:
                 return "🔥 真槍實彈 (Live Trading)", True
 
+        def _handle_setcost(new_cost: float) -> str:
+            """處理指揮官強制覆寫成本的指令"""
+            if not self.auto_trading_active:
+                return "⚠️ 請先啟動系統 (運轉中) 再設定成本。"
+
+            # 強制植入大腦記憶
+            self.strategy.entry_price = new_cost
+            self.strategy.highest_price = new_cost  # 重置最高價 (讓移動停利重新計算)
+            self.strategy.lowest_price = new_cost   # 重置最低價
+
+            return (f"🫡 報告指揮官！\n"
+                    f"大腦記憶已強制覆寫！\n"
+                    f"✅ 新防禦基準成本: {new_cost}")
+    
         def get_status():
+            import re # 引入正則表達式，用來過濾 UI 顏色標籤
+            
             mode_str, is_real = get_mode_info()
-            
-            # 1. 取得策略視角狀態 (Shadow)
-            pos_text = "⚪️ 空手"
-            if self.strategy.position > 0: pos_text = f"🔴 多單 {self.strategy.position} 口"
-            elif self.strategy.position < 0: pos_text = f"🟢 空單 {abs(self.strategy.position)} 口"
-            
             run_state = "🟢 運轉中" if self.auto_trading_active else "🟠 已暫停"
             
-            # 最新價
-            last_price = "Wait"
-            if self.strategy.raw_bars:
-                last_price = int(self.strategy.raw_bars[-1]['close'])
-            
+            # 1. 系統層與執行官 (Executor) 報告
             report = (
                 f"📊 **系統狀態報告**\n"
                 f"------------------\n"
                 f"⚙️ 模式: {mode_str}\n"
                 f"🚦 狀態: {run_state}\n"
-                f"🎯 標的: `{self.symbol}` @ {last_price}\n"
-                f"🤖 **策略倉位**: {pos_text}\n"
+                f"🎯 標的: `{self.symbol}`\n"
             )
 
-            # 2. 如果是實戰，追加 API 真實數據
             if is_real:
                 try:
                     real_pos = self.executor.get_position()
                     real_pos_text = "⚪️ 0"
                     if real_pos > 0: real_pos_text = f"🔴 +{real_pos}"
                     elif real_pos < 0: real_pos_text = f"🟢 {real_pos}"
-                    
-                    report += f"🏦 **券商持倉**: {real_pos_text} (Real)\n"
-                    
-                    # 警示：如果策略跟券商不同步
-                    if real_pos != self.strategy.position:
-                        report += "⚠️ **警告**: 倉位不同步！請用 /sync 修正\n"
-                        
+                    report += f"🏦 券商持倉: {real_pos_text} (Real)\n"
                 except Exception as e:
                     report += f"❌ API 查詢失敗: {e}\n"
 
+            # 2. 策略層 (Strategy) 報告：完全授權給大腦自己陳述！
             report += f"------------------\n"
+            report += f"🧠 **大腦核心數據**\n"
+            
+            if hasattr(self.strategy, 'get_ui_dict'):
+                # 拿取策略已經整理好的完美 UI 字典
+                ui_data = self.strategy.get_ui_dict()
+                
+                for key, value in ui_data.items():
+                    # 魔法：把 Rich UI 用的 [green], [red], [/green] 標籤洗掉，讓 Telegram 顯示純淨文字
+                    clean_value = re.sub(r'\[/?.*?\]', '', str(value))
+                    report += f"{key}: {clean_value}\n"
+            else:
+                report += "❌ 策略大腦尚未安裝狀態回報模組\n"
 
             strategy_info = getattr(self.strategy, 'name', 'Unknown Strategy')
-            # 如果你想順便印停損，可以用 getattr 安全地拿 (沒有就回傳 N/A)
-            sl_info = getattr(self.strategy, 'stop_loss', 'N/A')
-            msg = f"🚀 \n策略: {strategy_info} | SL:{sl_info}"
+            report += f"------------------\n🚀 策略: {strategy_info}"
             
-            report += msg #f"MA({self.strategy.fast_window}/{self.strategy.slow_window}) | SL:{self.strategy.stop_loss}"
             return report
 
         def get_balance():
@@ -325,7 +333,7 @@ class BotEngine:
                     # 2. 備案：如果 Executor 拿不到，才用當下市價盲猜
                     current_price = getattr(self.strategy, 'latest_price', 0.0)
                     cost_source_msg = "當前市價 (備案)"
-                    
+
                 if current_price > 0:
                     self.strategy.entry_price = current_price
 
@@ -336,7 +344,8 @@ class BotEngine:
                     if hasattr(self.strategy, 'highest_price'): self.strategy.highest_price = current_price
                     if hasattr(self.strategy, 'lowest_price'): self.strategy.lowest_price = current_price
                     
-                    msg = f"⚠️ [Sync] 已接管未結算部位！成本基準價重新錨定為當前市價: {current_price}"
+                    # 🚀 讓通訊兵誠實說出數據來源
+                    msg = f"⚠️ [Sync] 已接管未結算部位！成本基準價重新錨定為【{cost_source_msg}】: {current_price}"
                     print(msg)
                     self.commander.send_message(msg)
             else:
@@ -368,7 +377,8 @@ class BotEngine:
             shutdown_cb=shutdown,
             manual_trade_cb=manual_trade,
             sync_position_cb=sync_position,
-            flatten_cb=flatten_position
+            flatten_cb=flatten_position,
+            setcost_cb=_handle_setcost
         )
 
     def _bind_events(self):
@@ -433,7 +443,7 @@ class BotEngine:
         self.aggregator.set_on_bar(self.on_bar_generated)
 
     def load_warmup_data(self, csv_path="data/history/TMF_History.csv"):
-        history_bars = load_history_data(csv_path, tail_count=6000)
+        history_bars = load_history_data(csv_path, tail_count=25000)
         if history_bars:
             self.strategy.load_history_bars(history_bars)
             self.commander.send_message(f"✅ **暖機完成**\n已載入 {len(history_bars)} 根歷史 K 棒")

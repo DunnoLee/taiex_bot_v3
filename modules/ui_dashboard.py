@@ -78,7 +78,10 @@ class DashboardUI:
         for i in range(0, len(items), 2):
             k1, v1 = items[i]
             k2, v2 = items[i+1] if i+1 < len(items) else ("", "")
-            table.add_row(f"📊 {k1}:", str(v1), f"📊 {k2}:" if k2 else "", str(v2))
+            # 替換前：
+            # table.add_row(f"📊 {k1}:", str(v1), f"📊 {k2}:" if k2 else "", str(v2))
+            # 替換後 (讓大腦傳來的 Emoji 完美呈現)：
+            table.add_row(f"{k1}:", str(v1), f"{k2}:" if k2 else "", str(v2))
 
         upper_panel = Panel(table, title="[bold yellow]🚀 TaiEx Bot V3 戰術儀表板[/bold yellow]", border_style="blue")
         layout["upper"].update(upper_panel)

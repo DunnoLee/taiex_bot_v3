@@ -43,28 +43,68 @@ def evaluate_single_combo(args):
         bot.inject_flatten_signal(reason="期末結算")
         
         # 5. 計算成績單
-        trades = len(executor.trades)
-        win_rate = (executor.win_count / trades * 100) if trades > 0 else 0
-        total_pnl = executor.total_pnl
+        trades_list = getattr(executor, 'trades', [])
+        total_trades = len(trades_list)
+        win_count = getattr(executor, 'win_count', 0)
+        win_rate = (win_count / total_trades * 100) if total_trades > 0 else 0
+        total_pnl = getattr(executor, 'total_pnl', 0)
         
+        # ==========================================
+        # 🛡️ 升級：照妖鏡雷達 (完全解耦防彈版)
+        # ==========================================
+        long_pnl = 0
+        short_pnl = 0
+        
+        # 🚀 修正：不再依賴 initial_capital，直接用累積 PnL 算回撤！
+        current_pnl = 0
+        peak_pnl = 0
+        max_drawdown = 0
+        
+        # 因為 BaseExecutor 只存了純數字的 PnL，所以我們直接讀取數字
+        for pnl in trades_list:
+            # 確保它是浮點數
+            pnl_value = float(pnl) 
+            
+            # 計算落袋最大回撤 (Trade-Close MDD)
+            current_pnl += pnl_value
+            if current_pnl > peak_pnl:
+                peak_pnl = current_pnl  # 創下獲利新高
+            
+            drawdown = peak_pnl - current_pnl # 計算從高點滑落了多少
+            if drawdown > max_drawdown:
+                max_drawdown = drawdown # 記錄最慘的一次跌幅
+                
+        # 計算風報比 (總淨利 / 最大回撤)
+        reward_risk_ratio = round((total_pnl / max_drawdown), 2) if max_drawdown > 0 else float('inf')
+
         # 恢復終端機的正常輸出
         sys.stdout = original_stdout
         devnull.close()
-        return {'參數組合': str(params), '總淨利': total_pnl, '交易次數': trades, '勝率(%)': round(win_rate, 2)}
-    
-        # 回傳這組參數的成績
+        
+        # 回傳這組參數的終極成績單
         return {
             '參數組合': str(params),
-            '總淨利': total_pnl,
-            '交易次數': trades,
+            '總淨利': int(total_pnl),
+            'MDD(最大回撤)': int(max_drawdown),
+            '風報比': reward_risk_ratio,
+            '交易次數': total_trades,
             '勝率(%)': round(win_rate, 2)
+            # 備註：多空分離欄位暫時移除，等未來升級 BaseExecutor 再加回來
         }
         
     except Exception as e:
-        # 發生錯誤也要記得恢復輸出
+        # 發生錯誤也要記得恢復輸出，並且回傳完整的防呆字典
         sys.stdout = original_stdout
         devnull.close()
-        return {'參數組合': str(params), '總淨利': 0, '交易次數': 0, '勝率(%)': 0, 'Error': str(e)}
+        return {
+            '參數組合': str(params), 
+            '總淨利': 0, 
+            'MDD(最大回撤)': 0,
+            '風報比': 0,
+            '交易次數': 0, 
+            '勝率(%)': 0, 
+            'Error': str(e)
+        }
     
 def split_data_for_oos(history_file: str, train_ratio=0.7):
     """資料切割機：將歷史 CSV 切成 70% 訓練集與 30% 盲測集"""
@@ -133,7 +173,10 @@ def run_grid_search(strategy_class, param_grid: dict, history_file: str):
                 # 只要沒有發生 Error，就把成績收進來
                 if 'Error' not in result:
                     results.append(result)
-                
+                else:
+                    # 🚨 加上這行：讓黑洞裡的錯誤印在螢幕上！
+                    print(f"\n❌ [崩潰警告] 參數: {result['參數組合']} | 錯誤原因: {result['Error']}")
+
                 # 🚀 狂暴回報模式：每跑完 1 組就印出來，讓你知道程式還活著！
                 percent = ((i + 1) / total_tasks) * 100
                 print(f"✅ 核心回報: 已完成 {i + 1} / {total_tasks} 組 (進度: {percent:.1f}%)")
@@ -205,20 +248,22 @@ if __name__ == "__main__":
 
     # 這裡放你要測試的參數網格 (例如你剛剛跑出 8.5 萬的那組範圍)
     param_grid = {
-        'fast_window': [10,15],
-        'slow_window': [300],
+        'fast_window': [5,15],
+        'slow_window': [60,300],
         'enable_adx': [True],
         'adx_threshold': [25],
         'adx_period': [14],
-        'resample': [15], 
-        'filter_point': [50.0,80.0,100.0],
-        'stop_loss': [400.0],
+        'resample': [5,60], 
+        'filter_point': [100.0],
+        'stop_loss': [800.0],
         'enable_vol_filter': [True],
         'vol_ma_period': [20],
-        'vol_multiplier': [1.0,1.2,1.5],
+        'vol_multiplier': [1.5],
         'enable_trailing_stop': [True],
-        'trailing_trigger': [300,400],
-        'trailing_dist': [200,300]
+        'trailing_trigger': [300,600],
+        'trailing_dist': [100,300,500],
+        'ma_type_fast':["EMA"],
+        'ma_type_slow':["SMA"]
     }
     
     # ==========================================

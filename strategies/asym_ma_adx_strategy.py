@@ -162,3 +162,59 @@ class AsymMaAdxStrategy(BaseStrategy):
                 return SignalEvent(type=EventType.SIGNAL, symbol=bar.symbol, signal_type=SignalType.SHORT, strength=1.0, reason="空頭成型 (跌破生命線)")
 
         return None
+    
+    def get_ui_dict(self):
+        """提供給 Rich 儀表板的專屬全息即時數據"""
+        price = getattr(self, 'latest_price', 0.0)
+        ma_fast = getattr(self, 'cached_ma_fast', 0.0)
+        ma_slow = getattr(self, 'cached_ma_slow', 0.0)
+        regime = getattr(self, 'cached_regime_ma', 0.0)
+        adx = getattr(self, 'cached_adx', 0.0)
+        
+        # 1. 如果還在暖機，直接回傳等待畫面
+        if ma_fast == 0.0:
+            return {
+                "💰 目前報價": f"{price}",
+                "⏳ 系統狀態": "歷史資料暖機計算中..."
+            }
+            
+        # 2. 趨勢與濾網判定
+        trend_str = "[red]偏空[/red]" if ma_fast < ma_slow else "[green]偏多[/green]"
+        regime_str = "[red]跌破[/red]" if price < regime else "[green]站上[/green]"
+        adx_str = f"[bold red]🔥 {adx:.1f} (爆發)[/bold red]" if adx > self.adx_threshold else f"🧊 {adx:.1f} (盤整)"
+        lock_str = "🔒 鎖定中" if self.wave_locked else "🔓 尋找獵物"
+
+        # 3. 防守與損益狀態
+        defense_str = "⚪️ 無部位"
+        pnl_str = "0 pts"
+        
+        if self.position != 0 and hasattr(self, 'entry_price') and self.entry_price > 0:
+            pnl = (price - self.entry_price) if self.position > 0 else (self.entry_price - price)
+            pnl_color = "green" if pnl > 0 else "red"
+            pnl_str = f"[{pnl_color}]{pnl:.0f} pts[/{pnl_color}]"
+            
+            if self.position > 0:
+                high_p = getattr(self, 'highest_price', self.entry_price)
+                if pnl >= getattr(self, 'long_trailing_activate', 0):
+                    defense_str = f"🛡️ 移動停利 (高點 {high_p:.0f} 回檔 {self.long_trailing_dist} 出場)"
+                else:
+                    defense_str = f"🧱 硬停損 (跌破 {self.entry_price + self.long_stop_loss:.0f} 出場)"
+            else:
+                low_p = getattr(self, 'lowest_price', self.entry_price)
+                if pnl >= getattr(self, 'short_trailing_activate', 0):
+                    defense_str = f"🛡️ 移動停利 (低點 {low_p:.0f} 反彈 {self.short_trailing_dist} 出場)"
+                else:
+                    defense_str = f"🧱 硬停損 (突破 {self.entry_price - self.short_stop_loss:.0f} 出場)"
+
+        # 4. 組裝回傳字典 (這裡的 Key 會直接變成儀表板上的標題)
+        return {
+            "💰 目前報價": f"{price}",
+            "🎯 策略狀態": lock_str,
+            "⚡️ 快線(15m)": f"{ma_fast:.1f}",
+            "🐢 慢線(15m)": f"{ma_slow:.1f} [{trend_str}]",
+            "🌍 生命線(60d)": f"{regime:.1f} [{regime_str}]",
+            "🔥 ADX 強度": adx_str,
+            "📈 帳面損益": pnl_str,
+            "🛡️ 防守陣線": defense_str
+        }
+    

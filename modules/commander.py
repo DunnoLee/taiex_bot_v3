@@ -32,7 +32,7 @@ class TelegramCommander:
         self.manual_trade_cb = None
         self.sync_position_cb = None
         self.flatten_cb = None  # <--- 新增這個
-
+        self.setcost_cb = None
 
         if self.enabled:
             print("📡 [Commander] 雙向通訊模組 V3.2 (防殭屍版) 已就緒")
@@ -158,6 +158,43 @@ class TelegramCommander:
             self.send_message("⚠️ **收到指令：強制全平倉 (Flatten All)**")
             if self.flatten_cb: self.flatten_cb()
 
+        elif text == '/unlock':
+            # 兼容新舊策略的解鎖機制
+            unlocked = False
+            
+            # 1. 解鎖新版 Asym 策略
+            if hasattr(self.engine.strategy, 'wave_locked'):
+                self.engine.strategy.wave_locked = False
+                unlocked = True
+                
+            # 2. 解鎖舊版 V3.8 策略
+            if hasattr(self.engine.strategy, 'last_traded_wave'):
+                self.engine.strategy.last_traded_wave = 0
+                unlocked = True
+
+            if unlocked:
+                msg = "🔓 [指揮官覆寫] 已強制解除波段鎖定！大腦恢復自由開火權，正在尋找下一個獵物！"
+                print(f"⚠️ {msg}")
+                self.send_message(msg)
+            else:
+                self.send_message("❌ 找不到可解鎖的策略狀態變數。")
+        # 🆕 新增：強制設定大腦成本
+        elif cmd == "/setcost":
+            if len(parts) > 1:
+                try:
+                    new_cost = float(parts[1])
+                    if self.setcost_cb: 
+                        msg = self.setcost_cb(new_cost)
+                        self.send_message(msg)
+                    else:
+                        # 🚨 雷達警告：如果是這條線沒接好，終端機會立刻大叫！
+                        print("❌ [Debug] 漏接線路：setcost_cb 是 None！Engine 沒有成功把函數交給 Commander！")
+                except Exception as e:
+                    # 🚨 雷達警告：如果是大腦處理時出錯，把錯誤印出來！
+                    print(f"❌ [Debug] 執行 setcost 時大腦發生錯誤: {e}")
+            else:
+                self.send_message("❌ 請提供成本價 (例如 /setcost 35000)")
+
         elif cmd == "/help":
             self.send_message(
                 "🎮 **指令列表**\n"
@@ -169,13 +206,14 @@ class TelegramCommander:
                 "`/sync` - 同步真實倉位\n"
                 "`/status` - 系統狀態\n"
                 "`/balance` - 權益數查詢\n"
-                "`/kill` - 關閉程式"
+                "`/unlock` - 解除鎖定\n"
+                "`/setcost` - 更新成本價"
             )
         else:
             self.send_message(f"❓ 未知指令: {text}")
 
     # 記得更新 callback 設定介面
-    def set_callbacks(self, status_cb, balance_cb, toggle_cb, shutdown_cb, manual_trade_cb, sync_position_cb,flatten_cb):
+    def set_callbacks(self, status_cb, balance_cb, toggle_cb, shutdown_cb, manual_trade_cb, sync_position_cb,flatten_cb, setcost_cb):
         self.get_status_cb = status_cb
         self.get_balance_cb = balance_cb
         self.toggle_trading_cb = toggle_cb
@@ -183,3 +221,4 @@ class TelegramCommander:
         self.manual_trade_cb = manual_trade_cb  # 🆕
         self.sync_position_cb = sync_position_cb # 🆕
         self.flatten_cb = flatten_cb
+        self.setcost_cb = setcost_cb

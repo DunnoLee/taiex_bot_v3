@@ -14,10 +14,12 @@ class MaAdxStrategy(BaseStrategy):
                  # ==========================================
                  # 核心動力：時間級別與均線交叉
                  # ==========================================
-                 fast_window=10, slow_window=300, 
-                 resample=15,         # 決定策略的大腦看幾分 K (例如 60 = 小時線)
-                 filter_point=80.0,  # 均線交叉需要超過幾點才算數 (防震盪寬濾網)
-                 
+                 fast_window=15, slow_window=300, 
+                 resample=60,         # 決定策略的大腦看幾分 K (例如 60 = 小時線)
+                 filter_point=100.0,  # 均線交叉需要超過幾點才算數 (防震盪寬濾網)
+                 ma_type_fast="EMA",  # 🚀 新增：快線類型 (可填 "SMA" 或 "EMA")
+                 ma_type_slow="SMA",  # 🚀 新增：慢線類型 (可填 "SMA" 或 "EMA")
+
                  # ==========================================
                  # 模組 A：ADX 趨勢強度濾網
                  # ==========================================
@@ -33,14 +35,16 @@ class MaAdxStrategy(BaseStrategy):
                  # ==========================================
                  # 模組 C：防禦機制 (保命與鎖利)
                  # ==========================================
-                 stop_loss=400.0,         # 基礎硬停損 (永遠開啟)
+                 stop_loss=800.0,         # 基礎硬停損 (永遠開啟)
                  enable_trailing_stop=True, # 👈 [開關] 是否啟用移動停利
                  trailing_trigger=300.0,  # 賺超過幾點開始啟動追蹤
                  trailing_dist=300.0      # 從最高/低點回檔幾點就平倉
                  ):
         
         # 組合出漂亮的策略名稱，方便在日誌和 Telegram 中辨識
-        name_parts = [f"MA({fast_window}/{slow_window}|{resample}m)"]
+        # 🚀 修改：讓名稱自動顯示是 SMA 還是 EMA
+        name_parts = [f"{ma_type_fast.upper()}({fast_window})/{ma_type_slow.upper()}({slow_window})|{resample}m"]
+        
         if enable_adx: name_parts.append(f"ADX>{adx_threshold}")
         if enable_vol_filter: name_parts.append(f"Volx{vol_multiplier}")
         if enable_trailing_stop: name_parts.append(f"Trail({trailing_trigger}/{trailing_dist})")
@@ -49,6 +53,8 @@ class MaAdxStrategy(BaseStrategy):
         # --- 綁定核心參數 ---
         self.fast_window = fast_window
         self.slow_window = slow_window
+        self.ma_type_fast = ma_type_fast.upper() # 🚀 新增：記憶快線類型
+        self.ma_type_slow = ma_type_slow.upper() # 🚀 新增：記憶慢線類型
         self.filter_point = filter_point
         self.resample_min = resample
         self.stop_loss = stop_loss
@@ -157,9 +163,16 @@ class MaAdxStrategy(BaseStrategy):
                 self.prev_ma_fast = self.cached_ma_fast
                 self.prev_ma_slow = self.cached_ma_slow
 
-                # 基礎動力：計算 MA
-                self.cached_ma_fast = df_resampled['close'].rolling(window=self.fast_window).mean().iloc[-1]
-                self.cached_ma_slow = df_resampled['close'].rolling(window=self.slow_window).mean().iloc[-1]
+                # 基礎動力：計算 MA (🚀 支援 SMA 與 EMA 動態切換)
+                if self.ma_type_fast == "EMA":
+                    self.cached_ma_fast = df_resampled['close'].ewm(span=self.fast_window, adjust=False).mean().iloc[-1]
+                else:
+                    self.cached_ma_fast = df_resampled['close'].rolling(window=self.fast_window).mean().iloc[-1]
+
+                if self.ma_type_slow == "EMA":
+                    self.cached_ma_slow = df_resampled['close'].ewm(span=self.slow_window, adjust=False).mean().iloc[-1]
+                else:
+                    self.cached_ma_slow = df_resampled['close'].rolling(window=self.slow_window).mean().iloc[-1]
 
                 # 模組 A：計算 ADX (如果開關打開)
                 if self.enable_adx:
@@ -204,10 +217,23 @@ class MaAdxStrategy(BaseStrategy):
         current_wave = 0
         if ma_diff > self.filter_point:
             current_wave = 1   # 多頭波段
+            
+            # 🚀 裝甲升級：多頭動態解鎖 (允許二度進場)
+            # 如果目前鎖定中，但價格已經回檔「跌破快線」，代表洗盤結束，解除鎖定準備抓下一波主升段！
+            if getattr(self, 'last_traded_wave', 0) == 1 and current_price < self.cached_ma_fast:
+                self.last_traded_wave = 0
+                self.silent_mode = False # (可選) 讓它在日誌裡安靜
+                
         elif ma_diff < -self.filter_point:
             current_wave = -1  # 空頭波段
+            
+            # 🚀 裝甲升級：空頭動態解鎖
+            # 如果目前鎖定中，但反彈「突破快線」，解除鎖定準備抓下一波主跌段！
+            if getattr(self, 'last_traded_wave', 0) == -1 and current_price > self.cached_ma_fast:
+                self.last_traded_wave = 0
+                
         else:
-            # 🌈 關鍵防護：一旦快慢線差距縮小，回到盤整區，就解除上一波的鎖定！
+            # 🌈 傳統防護：快慢線差距縮小，回到盤整區，解除上一波的鎖定！
             self.last_traded_wave = 0
 
         # 2. 判斷是否為「尚未進場過」的新趨勢
@@ -226,8 +252,13 @@ class MaAdxStrategy(BaseStrategy):
         signal = None
         reason_parts = []
 
+        # ==========================================
         # 4. 終極開火授權：必須是新波段，且所有濾網都亮綠燈！
-        if is_bullish and adx_passed and vol_passed and self.position <= 0:
+        # ==========================================
+        
+        # 🚀 裝甲升級：加入「價格站回均線」的二度確認，防止停損後立刻接刀！
+        # 多頭：價格必須大於快線 (證明洗盤結束，已經重新站穩)
+        if is_bullish and adx_passed and vol_passed and self.position <= 0 and current_price > self.cached_ma_fast:
             
             self.last_traded_wave = 1 # 🔒 鎖定這個多頭波段，被洗掉也不准再追高！
             
@@ -245,7 +276,8 @@ class MaAdxStrategy(BaseStrategy):
             self.highest_price = current_price
             self.lowest_price = current_price
 
-        elif is_bearish and adx_passed and vol_passed and self.position >= 0:
+        # 🚀 空頭：價格必須小於快線 (證明反彈結束，再次破底)
+        elif is_bearish and adx_passed and vol_passed and self.position >= 0 and current_price < self.cached_ma_fast:
             
             self.last_traded_wave = -1 # 🔒 鎖定這個空頭波段
             
@@ -280,8 +312,17 @@ class MaAdxStrategy(BaseStrategy):
         print(f"🧠 [Strategy] 準備消化 {len(bars_list)} 根歷史資料以計算指標...")
         from core.event import BarEvent
         
-        # 為了避免暖機時亂發訊號，我們先把部位與停損狀態鎖定
-        original_pos = getattr(self, 'position', 0)
+        # ==========================================
+        # 🛡️ 1. 記憶體備份：把目前的真實狀態先存起來
+        # ==========================================
+        orig_pos = getattr(self, 'position', 0)
+        orig_entry = getattr(self, 'entry_price', 0.0)
+        orig_high = getattr(self, 'highest_price', 0.0)
+        orig_low = getattr(self, 'lowest_price', float('inf'))
+        orig_wave = getattr(self, 'last_traded_wave', 0)
+        
+        # 為了避免暖機時亂發訊號或干擾停損，我們先把部位歸零 (假裝沒單)
+        self.position = 0 
         
         for bar in bars_list:
             # 轉換成標準 K 棒物件
@@ -298,29 +339,85 @@ class MaAdxStrategy(BaseStrategy):
             else:
                 b = bar
             
-            # 🚀 關鍵：讓策略大腦正常處理這根 K 棒，藉此算出 MA、ADX 等所有指標！
-            # 但我們故意忽略它回傳的任何下單訊號 (SignalEvent)
+            # 讓策略大腦處理 K 棒以計算 MA、ADX
             self.on_bar(b)
             
-        # 暖機完畢，把部位重置回原本的狀態 (防止暖機過程的歷史訊號干擾現在)
-        self.position = original_pos
-        print(f"✅ [Strategy] 指標暖機完成！目前快線: {self.cached_ma_fast}, 慢線: {self.cached_ma_slow}")
-
+        # ==========================================
+        # 🛡️ 2. 記憶體還原：暖機完畢，把真實狀態全部寫回去！
+        # ==========================================
+        self.position = orig_pos
+        self.entry_price = orig_entry
+        self.highest_price = orig_high
+        self.lowest_price = orig_low
+        self.last_traded_wave = orig_wave
+        
+        # 🛡️ 3. 防彈印表機：如果資料不夠導致均線還是 None，就印出 N/A
+        fast_str = f"{self.cached_ma_fast:.1f}" if self.cached_ma_fast is not None else "N/A"
+        slow_str = f"{self.cached_ma_slow:.1f}" if self.cached_ma_slow is not None else "N/A"
+        print(f"✅ [Strategy] 指標暖機完成！目前快線: {fast_str}, 慢線: {slow_str}")
+        
     def get_ui_dict(self):
-        """提供給 Dashboard UI 顯示的專屬指標"""
-        ma_status = "⏳ 等待資料"
-        if self.cached_ma_fast and self.cached_ma_slow:
-            diff = self.cached_ma_fast - self.cached_ma_slow
-            if diff > self.filter_point: ma_status = f"[green]多頭 (+{diff:.1f})[/green]"
-            elif diff < -self.filter_point: ma_status = f"[red]空頭 ({diff:.1f})[/red]"
-            else: ma_status = f"[yellow]盤整 ({diff:.1f})[/yellow]"
+        """提供給 Dashboard UI 顯示的專屬指標 (全息透視升級版)"""
+        price = getattr(self, 'latest_price', 0.0)
+        ma_fast = getattr(self, 'cached_ma_fast', None)
+        ma_slow = getattr(self, 'cached_ma_slow', None)
+        adx = getattr(self, 'cached_adx', None)
+        vol = getattr(self, 'cached_current_vol', None)
+        
+        # 1. 暖機判斷
+        if ma_fast is None or ma_slow is None or np.isnan(ma_fast):
+            return {
+                "💰 目前報價": f"{price}",
+                "⏳ 系統狀態": "歷史資料暖機計算中..."
+            }
             
+        # 2. 均線與趨勢判定
+        diff = ma_fast - ma_slow
+        if diff > self.filter_point: 
+            ma_status = f"[green]多頭 (+{diff:.1f})[/green]"
+        elif diff < -self.filter_point: 
+            ma_status = f"[red]空頭 ({diff:.1f})[/red]"
+        else: 
+            ma_status = f"[yellow]盤整 ({diff:.1f})[/yellow]"
+
+        # ADX 判定
+        adx_str = "N/A"
+        if self.enable_adx and adx is not None:
+            adx_str = f"[bold red]🔥 {adx:.1f} (爆發)[/bold red]" if adx > self.adx_threshold else f"🧊 {adx:.1f} (盤整)"
+            
+        lock_str = "🔒 已鎖定" if getattr(self, 'last_traded_wave', 0) != 0 else "🔓 未鎖定"
+
+        # 3. 防守與損益狀態 (動態計算)
+        defense_str = "⚪️ 無部位"
+        pnl_str = "0 pts"
+        
+        if self.position != 0 and hasattr(self, 'entry_price') and self.entry_price > 0:
+            # 結算目前帳面點數
+            pnl = (price - self.entry_price) if self.position > 0 else (self.entry_price - price)
+            pnl_color = "green" if pnl > 0 else "red"
+            pnl_str = f"[{pnl_color}]{pnl:.0f} pts[/{pnl_color}]"
+            
+            # 判斷現在是「硬停損」還是已經啟動「移動停利」
+            if self.position > 0:
+                high_p = getattr(self, 'highest_price', self.entry_price)
+                if self.enable_trailing_stop and pnl >= self.trailing_trigger:
+                    defense_str = f"🛡️ 移動停利 (高點 {high_p:.0f} 回檔 {self.trailing_dist} 出場)"
+                else:
+                    defense_str = f"🧱 硬停損 (跌破 {self.entry_price - self.stop_loss:.0f} 出場)"
+            else:
+                low_p = getattr(self, 'lowest_price', self.entry_price)
+                if self.enable_trailing_stop and pnl >= self.trailing_trigger:
+                    defense_str = f"🛡️ 移動停利 (低點 {low_p:.0f} 反彈 {self.trailing_dist} 出場)"
+                else:
+                    defense_str = f"🧱 硬停損 (突破 {self.entry_price + self.stop_loss:.0f} 出場)"
+
+        # 4. 組裝回傳字典 (雙欄式排版)
         return {
-            "💰 目前報價": f"{getattr(self, 'latest_price', '等待開盤...')}",
-            "快線 (MA)": f"{self.cached_ma_fast:.1f}" if self.cached_ma_fast else "N/A",
-            "慢線 (MA)": f"{self.cached_ma_slow:.1f}" if self.cached_ma_slow else "N/A",
-            "均線狀態": ma_status,
-            "波段鎖定": "🔒 已鎖定" if getattr(self, 'last_traded_wave', 0) != 0 else "🔓 未鎖定",
-            "ADX 強度": f"{self.cached_adx:.1f}" if self.cached_adx else "N/A",
-            "當前爆量": f"{self.cached_current_vol}" if self.cached_current_vol else "N/A"
+            "💰 目前報價": f"{price}",
+            "🎯 策略狀態": lock_str,
+            "⚡️ 均線狀態": ma_status,
+            "🔥 ADX 強度": adx_str,
+            "📊 當前爆量": f"{vol}" if (self.enable_vol_filter and vol) else "N/A",
+            "📈 帳面損益": pnl_str,
+            "🛡️ 防守陣線": defense_str
         }
