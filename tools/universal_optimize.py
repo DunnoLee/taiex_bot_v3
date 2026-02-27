@@ -49,61 +49,76 @@ def evaluate_single_combo(args):
         win_rate = (win_count / total_trades * 100) if total_trades > 0 else 0
         total_pnl = getattr(executor, 'total_pnl', 0)
         
-        # ==========================================
-        # 🛡️ 升級：照妖鏡雷達 (完全解耦防彈版)
-        # ==========================================
+        # 🛡️ 升級：照妖鏡雷達 (多空分離 + 持倉時間版)
         long_pnl = 0
         short_pnl = 0
+        total_holding_minutes = 0
+        valid_time_records = 0
         
-        # 🚀 修正：不再依賴 initial_capital，直接用累積 PnL 算回撤！
         current_pnl = 0
         peak_pnl = 0
         max_drawdown = 0
         
-        # 因為 BaseExecutor 只存了純數字的 PnL，所以我們直接讀取數字
-        for pnl in trades_list:
-            # 確保它是浮點數
-            pnl_value = float(pnl) 
-            
+        # 掃描每一筆交易紀錄
+        for t in trades_list:
+            if isinstance(t, dict):
+                pnl_value = float(t.get('pnl', 0.0))
+                direction = str(t.get('direction', ''))
+                entry_t = t.get('entry_time')
+                exit_t = t.get('exit_time')
+                
+                # 分離多空損益
+                if direction == 'LONG': long_pnl += pnl_value
+                elif direction == 'SHORT': short_pnl += pnl_value
+                
+                # 計算持倉時間
+                if entry_t and exit_t:
+                    duration = exit_t - entry_t
+                    total_holding_minutes += duration.total_seconds() / 60.0
+                    valid_time_records += 1
+            else:
+                pnl_value = float(t) # 為了相容舊帳本
+                
             # 計算落袋最大回撤 (Trade-Close MDD)
             current_pnl += pnl_value
             if current_pnl > peak_pnl:
-                peak_pnl = current_pnl  # 創下獲利新高
-            
-            drawdown = peak_pnl - current_pnl # 計算從高點滑落了多少
+                peak_pnl = current_pnl  
+            drawdown = peak_pnl - current_pnl 
             if drawdown > max_drawdown:
-                max_drawdown = drawdown # 記錄最慘的一次跌幅
+                max_drawdown = drawdown 
                 
-        # 計算風報比 (總淨利 / 最大回撤)
+        # 計算風報比
         reward_risk_ratio = round((total_pnl / max_drawdown), 2) if max_drawdown > 0 else float('inf')
 
-        # 恢復終端機的正常輸出
+        # 計算平均持倉時間格式化
+        avg_holding_time = (total_holding_minutes / valid_time_records) if valid_time_records > 0 else 0
+        if avg_holding_time > 60:
+            holding_str = f"{int(avg_holding_time//60)}h {int(avg_holding_time%60)}m"
+        else:
+            holding_str = f"{int(avg_holding_time)}m"
+
         sys.stdout = original_stdout
         devnull.close()
         
-        # 回傳這組參數的終極成績單
         return {
             '參數組合': str(params),
             '總淨利': int(total_pnl),
             'MDD(最大回撤)': int(max_drawdown),
             '風報比': reward_risk_ratio,
+            '多單獲利': int(long_pnl),
+            '空單獲利': int(short_pnl),
+            '平均持倉': holding_str,
             '交易次數': total_trades,
             '勝率(%)': round(win_rate, 2)
-            # 備註：多空分離欄位暫時移除，等未來升級 BaseExecutor 再加回來
         }
         
     except Exception as e:
-        # 發生錯誤也要記得恢復輸出，並且回傳完整的防呆字典
         sys.stdout = original_stdout
         devnull.close()
         return {
-            '參數組合': str(params), 
-            '總淨利': 0, 
-            'MDD(最大回撤)': 0,
-            '風報比': 0,
-            '交易次數': 0, 
-            '勝率(%)': 0, 
-            'Error': str(e)
+            '參數組合': str(params), '總淨利': 0, 'MDD(最大回撤)': 0,
+            '風報比': 0, '多單獲利': 0, '空單獲利': 0, '平均持倉': '0m',
+            '交易次數': 0, '勝率(%)': 0, 'Error': str(e)
         }
     
 def split_data_for_oos(history_file: str, train_ratio=0.7):
@@ -202,8 +217,16 @@ def run_grid_search(strategy_class, param_grid: dict, history_file: str):
     print("\n" + "="*50)
     print(f"🏆 {strategy_class.__name__} 最佳化排行榜 (Top 20)")
     print("="*50)
-    print(df_results.head(20).to_string(index=False))
+    # 把過長的參數字串截斷，畫面才不會爆掉
+    df_display = df_results.copy()
+    df_display['參數組合'] = df_display['參數組合'].apply(lambda x: x[:60] + " ...}")
+    
+    # 印出整齊的表格
+    print(df_display.head(20).to_string(index=False, justify='center'))
     print("="*50 + "\n")
+    
+    # 貼心地把第一名的完整參數印在最下面給指揮官複製
+    print(f"👑 【榜首完整參數】\n{df_results.iloc[0]['參數組合']}\n")
 
     return df_results
 
@@ -211,77 +234,115 @@ def run_grid_search(strategy_class, param_grid: dict, history_file: str):
 # 🚀 執行區塊
 # ==========================================
 if __name__ == "__main__":
-    from strategies.ma_adx_strategy import MaAdxStrategy
-    from strategies.smart_hold_strategy import SmartHoldStrategy
-    HISTORY_FILE = "data/history/TMF_History.csv"
+    print("請選擇要最佳化的策略靶場:")
+    print("1: 🛡️ 長劍部隊 (MaAdxStrategy) -> 針對 TMF 大數據 (純多頭尋優)")
+    print("2: 🗡️ 刺客部隊 (MaAdx2Strategy) -> 針對 2022 熊市 (純空頭尋優)")
+    print("3: 非對稱雙向 (AsymMaAdxStrategy)")
+    choice = input("輸入代碼 (1/2/3): ")
 
-    # print("請選擇要最佳化的策略:")
-    # print("1: MA + ADX 趨勢狙擊策略")
-    # print("2: SmartHold 日線長抱策略")
-    # choice = input("輸入代碼 (1/2): ")
+    strate = None
+    HISTORY_FILE = None
+    param_grid = {}
+    
+    if choice == '1':
+        from strategies.ma_adx_strategy import MaAdxStrategy
+        strate = MaAdxStrategy
+        HISTORY_FILE = "data/history/TMF_History.csv"
+        # 這是你的霸主參數 (單一測試)
+        param_grid = {
+            'fast_window': [15],
+            'slow_window': [300],
+            'enable_adx': [True],
+            'adx_threshold': [25],
+            'adx_period': [14],
+            'resample': [60], 
+            'filter_point': [100.0],
+            'stop_loss': [800.0],
+            'enable_vol_filter': [True],
+            'vol_ma_period': [20],
+            'vol_multiplier': [1.5],
+            'enable_trailing_stop': [True],
+            'trailing_trigger': [300],
+            'trailing_dist': [300],
+            'ma_type_fast': ["EMA"],
+            'ma_type_slow': ["SMA"],
+            'enable_short': [False] # 純多頭
+        }
+        #{'fast_window': 15, 'slow_window': 300, 'enable_adx': True, 'adx_threshold': 25, 'adx_period': 14, 'resample': 60, 'filter_point': 100.0, 'stop_loss': 800.0, 'enable_vol_filter': True, 'vol_ma_period': 20, 'vol_multiplier': 1.5, 'enable_trailing_stop': True, 'trailing_trigger': 300, 'trailing_dist': 300, 'ma_type_fast': 'EMA', 'ma_type_slow': 'SMA', 'enable_short': False}
+    elif choice == '2':
+        from strategies.ma_adx_2_strategy import MaAdx2Strategy
+        strate = MaAdx2Strategy
+        HISTORY_FILE = "data/history/MTX_2022_Bear.csv"
+        # 🚀 擴大網格：讓最佳化器去尋找最佳空軍參數！
+        param_grid = {
+            'fast_window': [5, 10, 15],      # 測極短的快線
+            'slow_window': [60, 120, 240],   # 空頭反彈快，慢線不能太長
+            'enable_adx': [True],
+            'adx_threshold': [25],
+            'adx_period': [14],
+            'resample': [15, 30, 60],        # 測 15分、30分、60分K
+            'filter_point': [50.0, 100.0],   # 濾網縮小，反應才夠快
+            'stop_loss': [400.0, 800.0],
+            'enable_vol_filter': [False],    # 先關閉爆量濾網
+            'vol_ma_period': [20],
+            'vol_multiplier': [1.5],
+            'enable_trailing_stop': [True],
+            'trailing_trigger': [200, 300],  # 只要賺 200 點就準備跑
+            'trailing_dist': [200, 300],     # 反彈 200 點就平倉，絕不留戀！
+            'ma_type_fast': ["EMA"],
+            'ma_type_slow': ["SMA"],
+            'enable_long': [False],          # 關閉多頭
+            'enable_short': [True]           # 純空軍
+        }
+    elif choice == '3':
+        from strategies.asym_ma_adx_strategy import AsymMaAdxStrategy
+        strate = AsymMaAdxStrategy
+        HISTORY_FILE = "data/history/MTX_History_Huge.csv"
+        # 🚀 擴大網格：讓最佳化器去尋找最佳空軍參數！
+        param_grid = {
+            'fast_window': [15],      # 測極短的快線
+            'resample': [60],        # 測 15分、30分、60分K
+            'filter_point': [100.0],   # 濾網縮小，反應才夠快
+            'ma_type_fast': ["EMA"],
+            'ma_type_slow': ["SMA"],
+            # 🛡️ 左腦 (做多專用)
+            'slow_window_long': [300], 
+            'enable_vol_long': [True], 
+            # 🗡️ 右腦 (做空專用)
+            'slow_window_short': [240], 
+            'enable_vol_short': [False], 
+            # 共用模組
+            #'enable_adx': [True],
+            'adx_threshold': [25],
+            'adx_period': [14],
+            'vol_ma_period': [20],
+            'vol_multiplier': [1.5],
+            # 防禦機制
+            'stop_loss': [800.0],
+            'enable_trailing_stop': [True],
+            'trailing_trigger': [300],  # 只要賺 200 點就準備跑
+            'trailing_dist': [300]     # 反彈 200 點就平倉，絕不留戀！
+        }
+    else:
+        print("❌ 輸入錯誤，結束程式。")
+        sys.exit(0) # 👈 防呆機制，直接離開
 
-    # if choice == '1':
-    #     # 測試 MA-ADX 的參數
-    #     param_grid = {
-    #         'fast_window': [30],            # 測試 3 種快線
-    #         'slow_window': [300],         # 測試 3 種慢線
-    #         'adx_threshold': [30],          # 測試 3 種 ADX 門檻
-    #         'adx_period': [14],                     #
-    #         'resample': [60],                        # 固定 5分K
-    #         'filter_point': [100.0],
-    #         'stop_loss': [400.0]      # 測試 3 種停損點
-    #     }
-    #     # 3 x 3 x 3 x 1 x 3 = 81 種組合
-    #     run_grid_search(MaAdxStrategy, param_grid, HISTORY_FILE)
-
-    # elif choice == '2':
-    #     # 測試 SmartHold 的參數
-    #     param_grid = {
-    #         'daily_ma_period': [10, 20, 60],        # 雙週線、月線、季線
-    #         'threshold': [50.0, 100.0, 150.0],      # 避震器寬度
-    #         'stop_loss': [600.0, 800.0, 1000.0]     # 大範圍停損
-    #     }
-    #     # 3 x 3 x 3 = 27 種組合
-    #     run_grid_search(SmartHoldStrategy, param_grid, HISTORY_FILE)
-    # else:
-    #     print("輸入錯誤，結束程式。")
-
-    # 這裡放你要測試的參數網格 (例如你剛剛跑出 8.5 萬的那組範圍)
-    param_grid = {
-        'fast_window': [5,15],
-        'slow_window': [60,300],
-        'enable_adx': [True],
-        'adx_threshold': [25],
-        'adx_period': [14],
-        'resample': [5,60], 
-        'filter_point': [100.0],
-        'stop_loss': [800.0],
-        'enable_vol_filter': [True],
-        'vol_ma_period': [20],
-        'vol_multiplier': [1.5],
-        'enable_trailing_stop': [True],
-        'trailing_trigger': [300,600],
-        'trailing_dist': [100,300,500],
-        'ma_type_fast':["EMA"],
-        'ma_type_slow':["SMA"]
-    }
     
     # ==========================================
     # 🛡️ OOS 盲測三部曲
     # ==========================================
     
     # 1. 切割資料 (70% 訓練, 30% 盲測)
-    is_file, oos_file = split_data_for_oos(HISTORY_FILE, train_ratio=1)
+    # 🚀 修正：把 train_ratio 從 1 改回 0.7，這樣才有資料做 OOS 盲測
+    is_file, oos_file = split_data_for_oos(HISTORY_FILE, train_ratio=0.7)
     
     # 2. 只用 IS (訓練集) 跑網格搜索
-    # 注意：這裡假設你的 run_grid_search 最後有 return df_results
-    # 如果沒有，請在 run_grid_search 最後加上 return df_results
-    df_results = run_grid_search(MaAdxStrategy, param_grid, is_file)
+    df_results = run_grid_search(strate, param_grid, is_file)
     
     if df_results is not None and not df_results.empty:
         # 3. 抓出排行榜第一名的參數
         best_params_str = df_results.iloc[0]['參數組合']
-        best_params = ast.literal_eval(best_params_str) # 安全地把字串轉回字典
+        best_params = ast.literal_eval(best_params_str)
         
         print("\n" + "👑"*25)
         print(f"🛡️ 啟動樣本外盲測 (Out-of-Sample Validation)")
@@ -289,8 +350,7 @@ if __name__ == "__main__":
         print("👑"*25)
         
         # 4. 用 OOS (盲測集) 跑一次第一名的參數
-        # 直接呼叫你原本寫好的 evaluate_single_combo
-        oos_result = evaluate_single_combo((MaAdxStrategy, best_params, oos_file))
+        oos_result = evaluate_single_combo((strate, best_params, oos_file))
         
         # 5. 印出殘酷的對照表
         is_pnl = df_results.iloc[0]['總淨利']

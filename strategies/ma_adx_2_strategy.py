@@ -5,7 +5,7 @@ from core.base_strategy import BaseStrategy
 from core.event import BarEvent, SignalEvent, SignalType, EventType
 from config.settings import Settings
 
-class MaAdxStrategy(BaseStrategy):
+class MaAdx2Strategy(BaseStrategy):
     """
     【樂高模組化】MA + 趨勢與籌碼多重濾網策略 (V3.8 Ultimate)
     特色：所有指標與防禦機制皆可透過「開關 (True/False)」自由組合！
@@ -41,7 +41,8 @@ class MaAdxStrategy(BaseStrategy):
                  trailing_dist=300.0,      # 從最高/低點回檔幾點就平倉
 
                  # 🚀 新增：多空方向鎖 (Long-Only 開關)
-                 enable_short=False        # 👈 預設為 True (允許做空)，方便相容舊版
+                 enable_short=False,        # 👈 預設為 True (允許做空)，方便相容舊版
+                 enable_long=True
                  ):
         
         # 組合出漂亮的策略名稱，方便在日誌和 Telegram 中辨識
@@ -76,6 +77,7 @@ class MaAdxStrategy(BaseStrategy):
         self.trailing_dist = trailing_dist
         
         self.enable_short = enable_short
+        self.enable_long = enable_long
 
         # --- 策略狀態與快取 ---
         self.raw_bars = deque(maxlen=5000)
@@ -279,13 +281,22 @@ class MaAdxStrategy(BaseStrategy):
             if self.enable_adx: reason_parts.append(f"ADX強勢({self.cached_adx:.1f})")
             if self.enable_vol_filter: reason_parts.append(f"爆量({self.vol_multiplier}x)")
             
-            signal = SignalEvent(
-                type=EventType.SIGNAL, symbol=bar.symbol, signal_type=SignalType.LONG, strength=1.0,
-                reason=" | ".join(reason_parts)
-            )
-            self.entry_price = current_price
-            self.highest_price = current_price
-            self.lowest_price = current_price
+            if self.enable_long and self.position <= 0:
+                # 傳統模式：平空單並反手做多
+                signal = SignalEvent(
+                    type=EventType.SIGNAL, symbol=bar.symbol, signal_type=SignalType.LONG, strength=1.0,
+                    reason=" | ".join(reason_parts)
+                )
+                self.entry_price = current_price
+                self.highest_price = current_price
+                self.lowest_price = current_price
+                
+            elif not self.enable_long and self.position < 0:
+                # 🚀 純空頭模式 (Short-Only)：遇到金叉，只獲利了結平空單，不准做多！
+                signal = SignalEvent(
+                    type=EventType.SIGNAL, symbol=bar.symbol, signal_type=SignalType.FLATTEN,
+                    reason=" | ".join(reason_parts) + " (純空頭避險平倉)"
+                )
 
         # 🚀 空頭：價格必須小於快線 (證明反彈結束，再次破底)
         elif is_bearish and adx_passed and vol_passed and current_price < self.cached_ma_fast:
@@ -319,7 +330,7 @@ class MaAdxStrategy(BaseStrategy):
                 )
 
         self.save_state()
-        
+
         if signal:
             signal.timestamp = bar.timestamp # 👈 給開倉單蓋上時間戳記
             
@@ -385,7 +396,7 @@ class MaAdxStrategy(BaseStrategy):
         print(f"✅ [Strategy] 指標暖機完成！目前快線: {fast_str}, 慢線: {slow_str}")
 
         self.load_state()
-
+        
     def get_ui_dict(self):
         """提供給 Dashboard UI 顯示的專屬指標 (全息透視升級版)"""
         price = getattr(self, 'latest_price', 0.0)

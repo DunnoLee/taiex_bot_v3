@@ -18,9 +18,10 @@ def main():
     # from strategies.ma_adx_strategy import MaAdxStrategy
     # my_strategy = MaAdxStrategy()
 
-    from strategies.asym_ma_adx_strategy import AsymMaAdxStrategy
-    my_strategy = AsymMaAdxStrategy()
-    
+    # from strategies.asym_ma_adx_strategy import AsymMaAdxStrategy
+    # my_strategy = AsymMaAdxStrategy()
+    from strategies.universal_ma_strategy import UniversalMaStrategy
+    my_strategy = UniversalMaStrategy()
     # from strategies.smart_hold_strategy import SmartHoldStrategy
     # my_strategy = SmartHoldStrategy(daily_ma_period=20, stop_loss=800.0)
 

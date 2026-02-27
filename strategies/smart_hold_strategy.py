@@ -102,6 +102,8 @@ class SmartHoldStrategy(BaseStrategy):
             )
             self.entry_price = 0.0
 
+        self.save_state()
+        
         return signal
 
     def _check_stop_loss(self, current_price: float, symbol: str) -> SignalEvent:
@@ -120,6 +122,8 @@ class SmartHoldStrategy(BaseStrategy):
                 self.raw_bars.append({'datetime': bar['datetime'], 'close': bar['close']})
             else:
                 self.raw_bars.append({'datetime': bar.timestamp, 'close': bar.close})
+
+        self.load_state()
 
     def get_ui_dict(self):
         return {
